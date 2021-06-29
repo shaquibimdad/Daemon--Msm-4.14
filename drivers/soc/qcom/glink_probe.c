@@ -24,7 +24,6 @@
 
 #define GLINK_PROBE_LOG_PAGE_CNT 4
 static void *glink_ilc;
-static DEFINE_MUTEX(ssr_lock);
 
 #define GLINK_INFO(x, ...)						       \
 do {									       \
@@ -79,7 +78,6 @@ struct glink_ssr {
 	u32 seq_num;
 	struct completion completion;
 	struct work_struct unreg_work;
-	struct kref refcount;
 };
 
 struct edge_info {
@@ -97,18 +95,6 @@ struct edge_info {
 };
 LIST_HEAD(edge_infos);
 
-static void glink_ssr_release(struct kref *ref)
-{
-	struct glink_ssr *ssr = container_of(ref, struct glink_ssr,
-					     refcount);
-	struct glink_ssr_nb *nb, *tmp;
-
-	list_for_each_entry_safe(nb, tmp, &ssr->notify_list, list)
-		kfree(nb);
-
-	kfree(ssr);
-}
-
 static void glink_ssr_ssr_unreg_work(struct work_struct *work)
 {
 	struct glink_ssr *ssr = container_of(work, struct glink_ssr,
@@ -118,8 +104,9 @@ static void glink_ssr_ssr_unreg_work(struct work_struct *work)
 	list_for_each_entry_safe(nb, tmp, &ssr->notify_list, list) {
 		subsys_notif_unregister_notifier(nb->ssr_register_handle,
 						 &nb->nb);
+		kfree(nb);
 	}
-	kref_put(&ssr->refcount, glink_ssr_release);
+	kfree(ssr);
 }
 
 static int glink_ssr_ssr_cb(struct notifier_block *this,
@@ -127,15 +114,12 @@ static int glink_ssr_ssr_cb(struct notifier_block *this,
 {
 	struct glink_ssr_nb *nb = container_of(this, struct glink_ssr_nb, nb);
 	struct glink_ssr *ssr = nb->ssr;
-	struct device *dev;
+	struct device *dev = ssr->dev;
 	struct do_cleanup_msg msg;
 	int ret;
 
-	kref_get(&ssr->refcount);
-	mutex_lock(&ssr_lock);
-	dev = ssr->dev;
 	if (!dev || !ssr->ept)
-		goto out;
+		return NOTIFY_DONE;
 
 	if (code == SUBSYS_AFTER_SHUTDOWN) {
 		ssr->seq_num++;
@@ -155,7 +139,7 @@ static int glink_ssr_ssr_cb(struct notifier_block *this,
 		if (ret) {
 			GLINK_ERR(dev, "fail to send do cleanup to %s %d\n",
 				  nb->ssr_label, ret);
-			goto out;
+			return NOTIFY_DONE;
 		}
 
 		ret = wait_for_completion_timeout(&ssr->completion, HZ);
@@ -163,9 +147,6 @@ static int glink_ssr_ssr_cb(struct notifier_block *this,
 			GLINK_ERR(dev, "timeout waiting for cleanup resp\n");
 
 	}
-out:
-	mutex_unlock(&ssr_lock);
-	kref_put(&ssr->refcount, glink_ssr_release);
 	return NOTIFY_DONE;
 }
 
@@ -261,7 +242,6 @@ static int glink_ssr_probe(struct rpmsg_device *rpdev)
 	INIT_LIST_HEAD(&ssr->notify_list);
 	init_completion(&ssr->completion);
 	INIT_WORK(&ssr->unreg_work, glink_ssr_ssr_unreg_work);
-	kref_init(&ssr->refcount);
 
 	ssr->dev = &rpdev->dev;
 	ssr->ept = rpdev->ept;
@@ -277,12 +257,10 @@ static void glink_ssr_remove(struct rpmsg_device *rpdev)
 {
 	struct glink_ssr *ssr = dev_get_drvdata(&rpdev->dev);
 
-	mutex_lock(&ssr_lock);
 	ssr->dev = NULL;
 	ssr->ept = NULL;
-	mutex_unlock(&ssr_lock);
-
 	dev_set_drvdata(&rpdev->dev, NULL);
+
 	schedule_work(&ssr->unreg_work);
 }
 

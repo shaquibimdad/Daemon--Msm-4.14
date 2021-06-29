@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2009-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -424,18 +424,6 @@ static struct msm_soc_info cpu_of_id[] = {
 
 	/* atoll ID */
 	[407] = {MSM_CPU_ATOLL, "ATOLL"},
-
-	/* atollp ID */
-	[424] = {MSM_CPU_ATOLLP, "ATOLLP"},
-
-	/* atollab ID */
-	[443] = {MSM_CPU_ATOLL_AB, "ATOLL-AB"},
-
-	/* TRINKET-IOT IDs*/
-	[467] = {MSM_CPU_TRINKET_IOT, "TRINKET-IOT"},
-
-	/* TRINKETP-IOT IDs*/
-	[468] = {MSM_CPU_TRINKETP_IOT, "TRINKETP-IOT"},
 
 	/* Uninitialized IDs are not known to run Linux.
 	 * MSM_CPU_UNKNOWN is set to 0 to ensure these IDs are
@@ -1420,22 +1408,6 @@ static void * __init setup_dummy_socinfo(void)
 	} else if (early_machine_is_atoll()) {
 		dummy_socinfo.id = 407;
 		strlcpy(dummy_socinfo.build_id, "atoll - ",
-		sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_atollp()) {
-		dummy_socinfo.id = 424;
-		strlcpy(dummy_socinfo.build_id, "atollp - ",
-		sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_atoll_ab()) {
-		dummy_socinfo.id = 443;
-		strlcpy(dummy_socinfo.build_id, "atoll-ab - ",
-		sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_trinket_iot()) {
-		dummy_socinfo.id = 467;
-		strlcpy(dummy_socinfo.build_id, "trinket-iot - ",
-		sizeof(dummy_socinfo.build_id));
-	} else if (early_machine_is_trinketp_iot()) {
-		dummy_socinfo.id = 468;
-		strlcpy(dummy_socinfo.build_id, "trinketp-iot - ",
 		sizeof(dummy_socinfo.build_id));
 	} else
 		strlcat(dummy_socinfo.build_id, "Dummy socinfo",

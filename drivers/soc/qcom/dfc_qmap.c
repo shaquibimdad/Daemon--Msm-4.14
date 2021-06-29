@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -73,14 +73,13 @@ struct qmap_dfc_ind {
 	u8			reserved2;
 	u8			tx_info_valid:1;
 	u8			tx_info:1;
-	u8			rx_bytes_valid:1;
-	u8			reserved3:5;
+	u8			reserved3:6;
 	u8			bearer_id;
 	u8			tcp_bidir:1;
 	u8			bearer_status:3;
 	u8			reserved4:4;
 	__be32			grant;
-	__be32			rx_bytes;
+	u32			reserved5;
 	u32			reserved6;
 } __aligned(1);
 
@@ -98,12 +97,11 @@ struct qmap_dfc_query_resp {
 	u8			cmd_ver;
 	u8			bearer_id;
 	u8			tcp_bidir:1;
-	u8			rx_bytes_valid:1;
-	u8			reserved:6;
+	u8			reserved:7;
 	u8			invalid:1;
 	u8			reserved2:7;
 	__be32			grant;
-	__be32			rx_bytes;
+	u32			reserved3;
 	u32			reserved4;
 } __aligned(1);
 
@@ -158,7 +156,6 @@ static void dfc_qmap_send_inband_ack(struct dfc_qmi_data *dfc,
 	skb->protocol = htons(ETH_P_MAP);
 	skb->dev = rmnet_get_real_dev(dfc->rmnet_port);
 
-	rmnet_ctl_log_debug("TXI", skb->data, skb->len);
 	trace_dfc_qmap(skb->data, skb->len, false);
 	dev_queue_xmit(skb);
 }
@@ -195,11 +192,6 @@ static int dfc_qmap_handle_ind(struct dfc_qmi_data *dfc,
 	qmap_flow_ind.flow_status[0].num_bytes = ntohl(cmd->grant);
 	qmap_flow_ind.flow_status[0].seq_num = ntohs(cmd->seq_num);
 
-	if (cmd->rx_bytes_valid) {
-		qmap_flow_ind.flow_status[0].rx_bytes_valid = 1;
-		qmap_flow_ind.flow_status[0].rx_bytes = ntohl(cmd->rx_bytes);
-	}
-
 	if (cmd->tcp_bidir) {
 		qmap_flow_ind.ancillary_info_valid = 1;
 		qmap_flow_ind.ancillary_info_len = 1;
@@ -208,7 +200,7 @@ static int dfc_qmap_handle_ind(struct dfc_qmi_data *dfc,
 		qmap_flow_ind.ancillary_info[0].reserved = DFC_MASK_TCP_BIDIR;
 	}
 
-	dfc_do_burst_flow_control(dfc, &qmap_flow_ind, false);
+	dfc_do_burst_flow_control(dfc, &qmap_flow_ind);
 
 done:
 	return QMAP_CMD_ACK;
@@ -236,11 +228,6 @@ static int dfc_qmap_handle_query_resp(struct dfc_qmi_data *dfc,
 	qmap_flow_ind.flow_status[0].num_bytes = ntohl(cmd->grant);
 	qmap_flow_ind.flow_status[0].seq_num = 0xFFFF;
 
-	if (cmd->rx_bytes_valid) {
-		qmap_flow_ind.flow_status[0].rx_bytes_valid = 1;
-		qmap_flow_ind.flow_status[0].rx_bytes = ntohl(cmd->rx_bytes);
-	}
-
 	if (cmd->tcp_bidir) {
 		qmap_flow_ind.ancillary_info_valid = 1;
 		qmap_flow_ind.ancillary_info_len = 1;
@@ -249,7 +236,7 @@ static int dfc_qmap_handle_query_resp(struct dfc_qmi_data *dfc,
 		qmap_flow_ind.ancillary_info[0].reserved = DFC_MASK_TCP_BIDIR;
 	}
 
-	dfc_do_burst_flow_control(dfc, &qmap_flow_ind, true);
+	dfc_do_burst_flow_control(dfc, &qmap_flow_ind);
 
 	return QMAP_CMD_DONE;
 }
@@ -272,12 +259,8 @@ static void dfc_qmap_set_end_marker(struct dfc_qmi_data *dfc, u8 mux_id,
 	spin_lock_bh(&qos->qos_lock);
 
 	bearer = qmi_rmnet_get_bearer_map(qos, bearer_id);
-	if (!bearer) {
-		spin_unlock_bh(&qos->qos_lock);
-		return;
-	}
 
-	if (bearer->last_seq == seq_num && bearer->grant_size) {
+	if (bearer && bearer->last_seq == seq_num && bearer->grant_size) {
 		bearer->ack_req = 1;
 		bearer->ack_txid = tx_id;
 	} else {
@@ -458,7 +441,6 @@ static void dfc_qmap_send_end_marker_cnf(struct qos_info *qos,
 	skb->dev = qos->real_dev;
 
 	/* This cmd needs to be sent in-band */
-	rmnet_ctl_log_info("TXI", skb->data, skb->len);
 	trace_dfc_qmap(skb->data, skb->len, false);
 	rmnet_map_tx_qmap_cmd(skb);
 }
