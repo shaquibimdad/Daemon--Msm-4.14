@@ -1,4 +1,4 @@
-/* Copyright (c) 2017-2019, 2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -70,10 +70,6 @@ static struct qmi_dev_info device_clients[] = {
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
 	{
-		.dev_name = "pa_fr1",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
 		.dev_name = "cx_vdd_limit",
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
@@ -98,10 +94,6 @@ static struct qmi_dev_info device_clients[] = {
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
 	{
-		.dev_name = "charge_state",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
 		.dev_name = "mmw0",
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
@@ -118,27 +110,19 @@ static struct qmi_dev_info device_clients[] = {
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
 	{
-		.dev_name = "mmw_skin0",
+		.dev_name = "modem_skin0",
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
 	{
-		.dev_name = "mmw_skin1",
+		.dev_name = "modem_skin1",
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
 	{
-		.dev_name = "mmw_skin2",
+		.dev_name = "modem_skin2",
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
 	{
-		.dev_name = "mmw_skin3",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "cdsp_sw",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "cdsp_hw",
+		.dev_name = "modem_skin3",
 		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	},
 	{
@@ -148,90 +132,6 @@ static struct qmi_dev_info device_clients[] = {
 	{
 		.dev_name = "cpr_cold",
 		.type = QMI_CDEV_MIN_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "wlan",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "wlan_bw",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "modem_lte_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "modem_nr_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "modem_nr_scg_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "sdr0_lte_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "sdr1_lte_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "sdr0_nr_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "sdr1_nr_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "pa_sdr0_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "pa_sdr1_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "pa_fr1_sdr0_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "pa_fr1_sdr1_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "pa_fr1_sdr0_scg_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "pa_fr1_sdr1_scg_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "mmw0_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "mmw1_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "mmw2_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "mmw3_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "mmw_ul_throttling_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
-	},
-	{
-		.dev_name = "mmw_ific_dsc",
-		.type = QMI_CDEV_MAX_LIMIT_TYPE,
 	}
 };
 
