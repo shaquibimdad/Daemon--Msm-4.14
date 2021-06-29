@@ -3,6 +3,7 @@
  * fs/f2fs/f2fs.h
  *
  * Copyright (c) 2012 Samsung Electronics Co., Ltd.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *             http://www.samsung.com/
  */
 #ifndef _LINUX_F2FS_H
@@ -2162,7 +2163,7 @@ static inline bool is_idle(struct f2fs_sb_info *sbi, int type)
 		get_pages(sbi, F2FS_DIO_WRITE))
 		return false;
 
-	if (SM_I(sbi) && SM_I(sbi)->dcc_info &&
+	if (type != DISCARD_TIME && SM_I(sbi) && SM_I(sbi)->dcc_info &&
 			atomic_read(&SM_I(sbi)->dcc_info->queued_discard))
 		return false;
 
@@ -3118,7 +3119,7 @@ int f2fs_get_valid_checkpoint(struct f2fs_sb_info *sbi);
 void f2fs_update_dirty_page(struct inode *inode, struct page *page);
 void f2fs_remove_dirty_inode(struct inode *inode);
 int f2fs_sync_dirty_inodes(struct f2fs_sb_info *sbi, enum inode_type type);
-void f2fs_wait_on_all_pages(struct f2fs_sb_info *sbi, int type);
+void f2fs_wait_on_all_pages_writeback(struct f2fs_sb_info *sbi);
 int f2fs_write_checkpoint(struct f2fs_sb_info *sbi, struct cp_control *cpc);
 void f2fs_init_ino_entry_info(struct f2fs_sb_info *sbi);
 int __init f2fs_create_checkpoint_caches(void);
@@ -3638,6 +3639,16 @@ static inline bool f2fs_force_buffered_io(struct inode *inode,
 		return true;
 
 	return false;
+}
+
+static inline bool f2fs_may_encrypt_bio(struct inode *inode,
+		struct f2fs_io_info *fio)
+{
+	if (fio && (fio->type != DATA || fio->encrypted_page))
+		return false;
+
+	return (f2fs_encrypted_file(inode) &&
+			fscrypt_using_hardware_encryption(inode));
 }
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
