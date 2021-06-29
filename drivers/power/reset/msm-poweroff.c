@@ -1,4 +1,5 @@
-/* Copyright (c) 2013-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -45,7 +46,6 @@
 #define SCM_WDOG_DEBUG_BOOT_PART	0x9
 #define SCM_DLOAD_FULLDUMP		0X10
 #define SCM_EDLOAD_MODE			0X01
-#define SCM_EDLOAD_PCI_MODE		0X04
 #define SCM_DLOAD_CMD			0x10
 #define SCM_DLOAD_MINIDUMP		0X20
 #define SCM_DLOAD_BOTHDUMPS	(SCM_DLOAD_MINIDUMP | SCM_DLOAD_FULLDUMP)
@@ -56,18 +56,16 @@ static bool scm_pmic_arbiter_disable_supported;
 static bool scm_deassert_ps_hold_supported;
 /* Download mode master kill-switch */
 static void __iomem *msm_ps_hold;
-static void __iomem *boot_config;
 static phys_addr_t tcsr_boot_misc_detect;
 static void scm_disable_sdi(void);
-static bool early_pcie_init_enable;
-static unsigned int boot_config_shift;
 
 /*
  * Runtime could be only changed value once.
  * There is no API from TZ to re-enable the registers.
  * So the SDI cannot be re-enabled when it already by-passed.
  */
-static int download_mode = 1;
+
+int download_mode = 1;
 static bool force_warm_reboot;
 
 #ifdef CONFIG_QCOM_DLOAD_MODE
@@ -183,11 +181,7 @@ static void enable_emergency_dload_mode(void)
 		mb();
 	}
 
-	if (early_pcie_init_enable)
-		ret = scm_set_dload_mode(SCM_EDLOAD_PCI_MODE, 0);
-	else
-		ret = scm_set_dload_mode(SCM_EDLOAD_MODE, 0);
-
+	ret = scm_set_dload_mode(SCM_EDLOAD_MODE, 0);
 	if (ret)
 		pr_err("Failed to set secure EDLOAD mode: %d\n", ret);
 }
@@ -198,10 +192,10 @@ static int dload_set(const char *val, const struct kernel_param *kp)
 
 	int old_val = download_mode;
 
-	if (!download_mode) {
+	/*if (!download_mode) {
 		pr_err("Error: SDI dynamic enablement is not supported\n");
 		return -EINVAL;
-	}
+	}*/
 
 	ret = param_set_int(val, kp);
 
@@ -308,12 +302,17 @@ static void msm_restart_prepare(const char *cmd)
 		pr_info("Forcing a warm reset of the system\n");
 
 	/* Hard reset the PMIC unless memory contents must be maintained. */
-	if (force_warm_reboot || need_warm_reset)
+	if (force_warm_reboot || need_warm_reset || in_panic) {
+		pr_info("a warm reset of the system with in_panic %d or need_warm_reset %d\n", in_panic, need_warm_reset);
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
-	else
+	} else {
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
+	}
 
-	if (cmd != NULL) {
+	if (in_panic) {
+            qpnp_pon_set_restart_reason(PON_RESTART_REASON_PANIC);
+            qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+        } else if (cmd != NULL) {
 		if (!strncmp(cmd, "bootloader", 10)) {
 			qpnp_pon_set_restart_reason(
 				PON_RESTART_REASON_BOOTLOADER);
@@ -347,10 +346,17 @@ static void msm_restart_prepare(const char *cmd)
 				__raw_writel(0x6f656d00 | (code & 0xff),
 					     restart_reason);
 		} else if (!strncmp(cmd, "edl", 3)) {
-			enable_emergency_dload_mode();
+			if (0)
+				enable_emergency_dload_mode();
+			else
+				pr_notice("This command already been disabled\n");
 		} else {
+			qpnp_pon_set_restart_reason(PON_RESTART_REASON_NORMAL);
 			__raw_writel(0x77665501, restart_reason);
 		}
+	} else {
+		qpnp_pon_set_restart_reason(PON_RESTART_REASON_NORMAL);
+		__raw_writel(0x77665501, restart_reason);
 	}
 
 	flush_cache_all();
@@ -563,7 +569,6 @@ static int msm_restart_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct resource *mem;
 	struct device_node *np;
-	uint32_t read_val;
 	int ret = 0;
 
 #ifdef CONFIG_QCOM_DLOAD_MODE
@@ -660,35 +665,6 @@ skip_sysfs_create:
 					   "tcsr-boot-misc-detect");
 	if (mem)
 		tcsr_boot_misc_detect = mem->start;
-
-	early_pcie_init_enable = 0;
-	mem = platform_get_resource_byname(pdev, IORESOURCE_MEM, "boot-config");
-	if (mem) {
-		boot_config = devm_ioremap_resource(dev, mem);
-		if (IS_ERR(boot_config)) {
-			pr_err("unable to ioremap boot config offset\n");
-			return PTR_ERR(boot_config);
-		}
-
-		read_val = __raw_readl(boot_config);
-
-		boot_config_shift = 3;
-		np = of_find_compatible_node(NULL, NULL,
-				"qcom,pshold");
-		if (!np) {
-			pr_err("unable to find DT pshold\n");
-		} else {
-			ret = of_property_read_u32(np, "qcom,boot-config-shift",
-					&boot_config_shift);
-			if (ret)
-				pr_err("Unable to read boot_config_shift\n");
-		}
-
-		/* boot_config_shift provides the bit of BOOT_CONFIG register
-		 * which is used as PCIe_EARLY_INIT_EN.
-		 */
-		early_pcie_init_enable = (read_val >> boot_config_shift) & 1;
-	}
 
 	pm_power_off = do_msm_poweroff;
 	arm_pm_restart = do_msm_restart;

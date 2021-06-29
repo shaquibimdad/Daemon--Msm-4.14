@@ -1,4 +1,4 @@
-/* Copyright (c) 2018-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2018-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,7 +20,6 @@
 #include <linux/of_platform.h>
 #include <linux/of_batterydata.h>
 #include <linux/platform_device.h>
-#include <linux/iio/consumer.h>
 #include <linux/qpnp/qpnp-pbs.h>
 #include <linux/qpnp/qpnp-revid.h>
 #include <linux/thermal.h>
@@ -231,7 +230,6 @@ struct fg_dt_props {
 	int	delta_esr_disable_count;
 	int	delta_esr_thr_uohms;
 	int	rconn_uohms;
-	int	batt_id_pullup_kohms;
 	int	batt_temp_cold_thresh;
 	int	batt_temp_hot_thresh;
 	int	batt_temp_hyst;
@@ -255,11 +253,9 @@ struct fg_dt_props {
 struct fg_gen4_chip {
 	struct fg_dev		fg;
 	struct fg_dt_props	dt;
-	struct iio_channel	*batt_id_chan;
 	struct cycle_counter	*counter;
 	struct cap_learning	*cl;
 	struct ttf		*ttf;
-	struct soh_profile	*sp;
 	struct device_node	*pbs_dev;
 	struct nvmem_device	*fg_nvmem;
 	struct votable		*delta_esr_irq_en_votable;
@@ -540,38 +536,6 @@ struct bias_config id_table[3] = {
 	{0x75, 0x76, 30},
 };
 
-#define BID_VREF_MV	1875
-static int fg_get_batt_id_adc(struct fg_gen4_chip *chip, u32 *batt_id_ohms)
-{
-	int rc, batt_id_mv;
-	int64_t denom;
-
-	rc = iio_read_channel_processed(chip->batt_id_chan, &batt_id_mv);
-	if (rc < 0) {
-		pr_err("Error in reading batt_id channel, rc=%d\n", rc);
-		return rc;
-	}
-
-	batt_id_mv = div_s64(batt_id_mv, 1000);
-	if (batt_id_mv == 0) {
-		pr_debug("batt_id_mv = 0 from ADC\n");
-		return 0;
-	}
-
-	denom = div64_s64(BID_VREF_MV * 1000, batt_id_mv) - 1000;
-	if (denom <= 0) {
-		/* batt id connector might be open, return 0 kohms */
-		return 0;
-	}
-
-	*batt_id_ohms = div64_u64(chip->dt.batt_id_pullup_kohms * 1000 * 1000
-					+ denom / 2, denom);
-
-	pr_debug("batt_id_mv=%d, batt_id_ohms=%d\n", batt_id_mv, *batt_id_ohms);
-
-	return 0;
-}
-
 #define MAX_BIAS_CODE	0x70E4
 static int fg_gen4_get_batt_id(struct fg_gen4_chip *chip)
 {
@@ -579,9 +543,6 @@ static int fg_gen4_get_batt_id(struct fg_gen4_chip *chip)
 	int i, rc, batt_id_kohms;
 	u16 tmp = 0, bias_code = 0, delta = 0;
 	u8 val, bias_id = 0;
-
-	if (chip->batt_id_chan)
-		return fg_get_batt_id_adc(chip, &fg->batt_id_ohms);
 
 	for (i = 0; i < ARRAY_SIZE(id_table); i++)  {
 		rc = fg_read(fg, fg->rradc_base + id_table[i].status_reg, &val,
@@ -1136,13 +1097,10 @@ static int fg_gen4_get_ttf_param(void *data, enum ttf_param param, int *val)
 		return -ENODEV;
 
 	fg = &chip->fg;
+	if (fg->battery_missing)
+		return -EPERM;
 
 	switch (param) {
-	case TTF_TTE_VALID:
-		*val = 1;
-		if (fg->battery_missing || is_debug_batt_id(fg))
-			*val = 0;
-		break;
 	case TTF_MSOC:
 		rc = fg_gen4_get_prop_capacity(fg, val);
 		break;
@@ -1670,33 +1628,11 @@ static int fg_gen4_get_batt_profile(struct fg_dev *fg)
 		return -ENODATA;
 	}
 
-	if (chip->dt.multi_profile_load) {
-		if (chip->batt_age_level != avail_age_level) {
-			fg_dbg(fg, FG_STATUS, "Batt_age_level %d doesn't exist, using %d\n",
-				chip->batt_age_level, avail_age_level);
-			chip->batt_age_level = avail_age_level;
-		}
-
-		if (!chip->sp)
-			chip->sp = devm_kzalloc(fg->dev, sizeof(*chip->sp),
-						GFP_KERNEL);
-		if (!chip->sp)
-			return -ENOMEM;
-
-		if (!chip->sp->initialized) {
-			chip->sp->batt_id_kohms = fg->batt_id_ohms / 1000;
-			chip->sp->last_batt_age_level = chip->batt_age_level;
-			chip->sp->bp_node = batt_node;
-			chip->sp->bms_psy = fg->fg_psy;
-			rc = soh_profile_init(fg->dev, chip->sp);
-			if (rc < 0) {
-				devm_kfree(fg->dev, chip->sp);
-				chip->sp = NULL;
-			} else {
-				fg_dbg(fg, FG_STATUS, "SOH profile count: %d\n",
-					chip->sp->profile_count);
-			}
-		}
+	if (chip->dt.multi_profile_load &&
+		chip->batt_age_level != avail_age_level) {
+		fg_dbg(fg, FG_STATUS, "Batt_age_level %d doesn't exist, using %d\n",
+			chip->batt_age_level, avail_age_level);
+		chip->batt_age_level = avail_age_level;
 	}
 
 	rc = of_property_read_string(profile_node, "qcom,battery-type",
@@ -2559,14 +2495,14 @@ static int fg_gen4_update_maint_soc(struct fg_dev *fg)
 		goto out;
 	}
 
-	if (msoc >= fg->maint_soc) {
+	if (msoc > fg->maint_soc) {
 		/*
 		 * When the monotonic SOC goes above maintenance SOC, we should
 		 * stop showing the maintenance SOC.
 		 */
 		fg->delta_soc = 0;
 		fg->maint_soc = 0;
-	} else if (fg->maint_soc && msoc < fg->last_msoc) {
+	} else if (fg->maint_soc && msoc <= fg->last_msoc) {
 		/* MSOC is decreasing. Decrease maintenance SOC as well */
 		fg->maint_soc -= 1;
 		if (!(msoc % 10)) {
@@ -3494,14 +3430,12 @@ static irqreturn_t fg_delta_bsoc_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-#define CENTI_FULL_SOC		10000
 static irqreturn_t fg_delta_msoc_irq_handler(int irq, void *data)
 {
 	struct fg_dev *fg = data;
 	struct fg_gen4_chip *chip = container_of(fg, struct fg_gen4_chip, fg);
 	int rc, batt_soc, batt_temp, msoc_raw;
 	bool input_present = is_input_present(fg);
-	u32 batt_soc_cp;
 
 	rc = fg_get_msoc_raw(fg, &msoc_raw);
 	if (!rc)
@@ -3521,14 +3455,10 @@ static irqreturn_t fg_delta_msoc_irq_handler(int irq, void *data)
 	if (rc < 0) {
 		pr_err("Failed to read battery temp rc: %d\n", rc);
 	} else {
-		if (chip->cl->active) {
-			batt_soc_cp = div64_u64(
-					(u64)(u32)batt_soc * CENTI_FULL_SOC,
-					BATT_SOC_32BIT);
-			cap_learning_update(chip->cl, batt_temp, batt_soc_cp,
+		if (chip->cl->active)
+			cap_learning_update(chip->cl, batt_temp, batt_soc,
 				fg->charge_status, fg->charge_done,
 				input_present, is_qnovo_en(fg));
-		}
 
 		rc = fg_gen4_slope_limit_config(chip, batt_temp);
 		if (rc < 0)
@@ -3951,7 +3881,6 @@ static void status_change_work(struct work_struct *work)
 	struct fg_gen4_chip *chip = container_of(fg, struct fg_gen4_chip, fg);
 	int rc, batt_soc, batt_temp;
 	bool input_present, qnovo_en;
-	u32 batt_soc_cp;
 
 	if (fg->battery_missing) {
 		pm_relax(fg->dev);
@@ -3993,9 +3922,8 @@ static void status_change_work(struct work_struct *work)
 	cycle_count_update(chip->counter, (u32)batt_soc >> 24,
 		fg->charge_status, fg->charge_done, input_present);
 
-	batt_soc_cp = div64_u64((u64)(u32)batt_soc * CENTI_FULL_SOC,
-				BATT_SOC_32BIT);
-	cap_learning_update(chip->cl, batt_temp, batt_soc_cp,
+	if (fg->charge_status != fg->prev_charge_status)
+		cap_learning_update(chip->cl, batt_temp, batt_soc,
 			fg->charge_status, fg->charge_done, input_present,
 			qnovo_en);
 
@@ -4033,6 +3961,7 @@ static void status_change_work(struct work_struct *work)
 		pr_err("Failed to validate SOC scale mode, rc=%d\n", rc);
 
 	ttf_update(chip->ttf, input_present);
+	fg->prev_charge_status = fg->charge_status;
 out:
 	fg_dbg(fg, FG_STATUS, "charge_status:%d charge_type:%d charge_done:%d\n",
 		fg->charge_status, fg->charge_type, fg->charge_done);
@@ -4422,8 +4351,6 @@ static int fg_psy_set_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_SOH:
 		chip->soh = pval->intval;
-		if (chip->sp)
-			soh_profile_update(chip->sp, chip->soh);
 		break;
 	case POWER_SUPPLY_PROP_CLEAR_SOH:
 		if (chip->first_profile_load && !pval->intval) {
@@ -5400,8 +5327,6 @@ static int fg_gen4_parse_nvmem_dt(struct fg_gen4_chip *chip)
 #define DEFAULT_ESR_MEAS_CURR_MA	120
 #define DEFAULT_SCALE_VBATT_THR_MV	3400
 #define DEFAULT_SCALE_ALARM_TIMER_MS	10000
-#define DEFAULT_BATT_ID_PULLUP_KOHMS	100
-
 static int fg_gen4_parse_dt(struct fg_gen4_chip *chip)
 {
 	struct fg_dev *fg = &chip->fg;
@@ -5465,19 +5390,6 @@ static int fg_gen4_parse_dt(struct fg_gen4_chip *chip)
 	rc = fg_gen4_parse_nvmem_dt(chip);
 	if (rc < 0)
 		return rc;
-
-	rc = of_property_match_string(fg->dev->of_node, "io-channel-names",
-					"batt_id");
-	if (rc >= 0) {
-		chip->batt_id_chan = devm_iio_channel_get(fg->dev, "batt_id");
-		if (IS_ERR(chip->batt_id_chan)) {
-			rc = PTR_ERR(chip->batt_id_chan);
-			if (rc != -EPROBE_DEFER)
-				pr_err("Couldn't get batt_id_chan rc=%d\n", rc);
-			chip->batt_id_chan = NULL;
-			return rc;
-		}
-	}
 
 	if (of_get_available_child_count(node) == 0) {
 		dev_err(fg->dev, "No child nodes specified!\n");
@@ -5600,6 +5512,9 @@ static int fg_gen4_parse_dt(struct fg_gen4_chip *chip)
 	of_property_read_u32(node, "qcom,cl-min-delta-batt-soc",
 					&chip->cl->dt.min_delta_batt_soc);
 
+	chip->cl->dt.cl_wt_enable = of_property_read_bool(node,
+						"qcom,cl-wt-enable");
+
 	rc = of_property_read_u32(node, "qcom,cl-min-temp", &temp);
 	if (rc < 0)
 		chip->cl->dt.min_temp = DEFAULT_CL_MIN_TEMP_DECIDEGC;
@@ -5637,12 +5552,6 @@ static int fg_gen4_parse_dt(struct fg_gen4_chip *chip)
 		chip->cl->dt.max_cap_limit = temp;
 
 	of_property_read_u32(node, "qcom,cl-skew", &chip->cl->dt.skew_decipct);
-
-	if (of_property_read_bool(node, "qcom,cl-wt-enable")) {
-		chip->cl->dt.cl_wt_enable = true;
-		chip->cl->dt.max_start_soc = -EINVAL;
-		chip->cl->dt.min_start_soc = -EINVAL;
-	}
 
 	rc = of_property_read_u32(node, "qcom,fg-batt-temp-hot", &temp);
 	if (rc < 0)
@@ -5733,10 +5642,6 @@ static int fg_gen4_parse_dt(struct fg_gen4_chip *chip)
 	chip->dt.sys_min_volt_mv = DEFAULT_SYS_MIN_VOLT_MV;
 	of_property_read_u32(node, "qcom,fg-sys-min-voltage",
 				&chip->dt.sys_min_volt_mv);
-
-	chip->dt.batt_id_pullup_kohms = DEFAULT_BATT_ID_PULLUP_KOHMS;
-	of_property_read_u32(node, "qcom,batt-id-pullup-kohms",
-				&chip->dt.batt_id_pullup_kohms);
 	return 0;
 }
 
@@ -5775,34 +5680,6 @@ static void fg_gen4_cleanup(struct fg_gen4_chip *chip)
 	dev_set_drvdata(fg->dev, NULL);
 }
 
-static void fg_gen4_post_init(struct fg_gen4_chip *chip)
-{
-	int i;
-	struct fg_dev *fg = &chip->fg;
-
-	if (!is_debug_batt_id(fg))
-		return;
-
-	/* Disable all wakeable IRQs for a debug battery */
-	vote(fg->delta_bsoc_irq_en_votable, DEBUG_BOARD_VOTER, false, 0);
-	vote(chip->delta_esr_irq_en_votable, DEBUG_BOARD_VOTER, false, 0);
-	vote(chip->mem_attn_irq_en_votable, DEBUG_BOARD_VOTER, false, 0);
-
-	for (i = 0; i < FG_GEN4_IRQ_MAX; i++) {
-		if (fg->irqs[i].irq && fg->irqs[i].wakeable) {
-			if (i == BSOC_DELTA_IRQ || i == ESR_DELTA_IRQ ||
-					i == MEM_ATTN_IRQ) {
-				continue;
-			} else {
-				disable_irq_wake(fg->irqs[i].irq);
-				disable_irq_nosync(fg->irqs[i].irq);
-			}
-		}
-	}
-
-	fg_dbg(fg, FG_STATUS, "Disabled wakeable irqs for debug board\n");
-}
-
 static int fg_gen4_probe(struct platform_device *pdev)
 {
 	struct fg_gen4_chip *chip;
@@ -5819,6 +5696,7 @@ static int fg_gen4_probe(struct platform_device *pdev)
 	fg->debug_mask = &fg_gen4_debug_mask;
 	fg->irqs = fg_irqs;
 	fg->charge_status = -EINVAL;
+	fg->prev_charge_status = -EINVAL;
 	fg->online_status = -EINVAL;
 	fg->batt_id_ohms = -EINVAL;
 	chip->ki_coeff_full_soc[0] = -EINVAL;
@@ -6018,8 +5896,6 @@ static int fg_gen4_probe(struct platform_device *pdev)
 	device_init_wakeup(fg->dev, true);
 	if (!fg->battery_missing)
 		schedule_delayed_work(&fg->profile_load_work, 0);
-
-	fg_gen4_post_init(chip);
 
 	pr_debug("FG GEN4 driver probed successfully\n");
 	return 0;
