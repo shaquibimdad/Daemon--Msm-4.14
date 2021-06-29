@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,7 +31,6 @@
 #define   CTL_PREPARE                   0x0d0
 #define   CTL_SW_RESET                  0x030
 #define   CTL_SW_RESET_OVERRIDE         0x060
-#define   CTL_STATUS                    0x064
 #define   CTL_LAYER_EXTN_OFFSET         0x40
 #define   CTL_ROT_TOP                   0x0C0
 #define   CTL_ROT_FLUSH                 0x0C4
@@ -710,13 +709,6 @@ static u32 sde_hw_ctl_get_reset_status(struct sde_hw_ctl *ctx)
 	return (u32)SDE_REG_READ(&ctx->hw, CTL_SW_RESET);
 }
 
-static u32 sde_hw_ctl_get_scheduler_status(struct sde_hw_ctl *ctx)
-{
-	if (!ctx)
-		return 0;
-	return (u32)SDE_REG_READ(&ctx->hw, CTL_STATUS);
-}
-
 static int sde_hw_ctl_reset_control(struct sde_hw_ctl *ctx)
 {
 	struct sde_hw_blk_reg_map *c;
@@ -811,6 +803,8 @@ static void sde_hw_ctl_setup_blendstage(struct sde_hw_ctl *ctx,
 		pipes_per_stage = PIPES_PER_STAGE;
 	else
 		pipes_per_stage = 1;
+
+	mixercfg = CTL_MIXER_BORDER_OUT; /* always set BORDER_OUT */
 
 	if (!stage_cfg)
 		goto exit;
@@ -918,10 +912,6 @@ static void sde_hw_ctl_setup_blendstage(struct sde_hw_ctl *ctx,
 	}
 
 exit:
-	if ((!mixercfg && !mixercfg_ext && !mixercfg_ext2 && !mixercfg_ext3) ||
-			(stage_cfg && !stage_cfg->stage[0][0]))
-		mixercfg |= CTL_MIXER_BORDER_OUT;
-
 	SDE_REG_WRITE(c, CTL_LAYER(lm), mixercfg);
 	SDE_REG_WRITE(c, CTL_LAYER_EXT(lm), mixercfg_ext);
 	SDE_REG_WRITE(c, CTL_LAYER_EXT2(lm), mixercfg_ext2);
@@ -1036,8 +1026,12 @@ static int sde_hw_ctl_reset_post_disable(struct sde_hw_ctl *ctx,
 		struct sde_hw_intf_cfg_v1 *cfg, u32 merge_3d_idx)
 {
 	struct sde_hw_blk_reg_map *c;
-	u32 intf_active = 0, wb_active = 0, merge_3d_active = 0;
-	u32 intf_flush = 0, wb_flush = 0;
+	u32 intf_active = 0;
+	u32 intf_flush = 0;
+	u32 merge_3d_active = 0;
+	u32 merge_3d_flush = 0;
+	u32 wb_active = 0;
+	u32 wb_flush = 0;
 	u32 i;
 
 	if (!ctx || !cfg) {
@@ -1062,30 +1056,25 @@ static int sde_hw_ctl_reset_post_disable(struct sde_hw_ctl *ctx,
 
 	if (merge_3d_idx) {
 		/* disable and flush merge3d_blk */
-		ctx->flush.pending_merge_3d_flush_mask =
-			BIT(merge_3d_idx - MERGE_3D_0);
+		merge_3d_flush = BIT(merge_3d_idx - MERGE_3D_0);
 		merge_3d_active &= ~BIT(merge_3d_idx - MERGE_3D_0);
+		ctx->flush.pending_merge_3d_flush_mask = merge_3d_flush;
 		SDE_REG_WRITE(c, CTL_MERGE_3D_ACTIVE, merge_3d_active);
 	}
 	sde_hw_ctl_clear_all_blendstages(ctx);
 
-	if (cfg->intf_count) {
-		ctx->flush.pending_intf_flush_mask = intf_flush;
-		UPDATE_MASK(ctx->flush.pending_flush_mask, INTF_IDX, 1);
-		SDE_REG_WRITE(c, CTL_INTF_ACTIVE, intf_active);
-	}
+	ctx->flush.pending_intf_flush_mask = intf_flush;
+	ctx->flush.pending_wb_flush_mask = wb_flush;
 
-	if (cfg->wb_count) {
-		ctx->flush.pending_wb_flush_mask = wb_flush;
-		UPDATE_MASK(ctx->flush.pending_flush_mask, WB_IDX, 1);
-		SDE_REG_WRITE(c, CTL_WB_ACTIVE, wb_active);
-	}
+
+	SDE_REG_WRITE(c, CTL_INTF_ACTIVE, intf_active);
+	SDE_REG_WRITE(c, CTL_WB_ACTIVE, wb_active);
 
 	return 0;
 }
 
 static int sde_hw_ctl_update_cwb_cfg(struct sde_hw_ctl *ctx,
-		struct sde_hw_intf_cfg_v1 *cfg, bool enable)
+		struct sde_hw_intf_cfg_v1 *cfg)
 {
 	int i;
 	u32 cwb_active = 0;
@@ -1109,16 +1098,10 @@ static int sde_hw_ctl_update_cwb_cfg(struct sde_hw_ctl *ctx,
 			merge_3d_active |= BIT(cfg->merge_3d[i] - MERGE_3D_0);
 	}
 
-	if (enable) {
-		wb_active = BIT(2);
-		SDE_REG_WRITE(c, CTL_WB_ACTIVE, wb_active);
-		SDE_REG_WRITE(c, CTL_MERGE_3D_ACTIVE, merge_3d_active);
-		SDE_REG_WRITE(c, CTL_CWB_ACTIVE, cwb_active);
-	} else {
-		SDE_REG_WRITE(c, CTL_WB_ACTIVE, 0x0);
-		SDE_REG_WRITE(c, CTL_MERGE_3D_ACTIVE, 0x0);
-		SDE_REG_WRITE(c, CTL_CWB_ACTIVE, 0x0);
-	}
+	wb_active = BIT(2);
+	SDE_REG_WRITE(c, CTL_WB_ACTIVE, wb_active);
+	SDE_REG_WRITE(c, CTL_MERGE_3D_ACTIVE, merge_3d_active);
+	SDE_REG_WRITE(c, CTL_CWB_ACTIVE, cwb_active);
 
 	return 0;
 }
@@ -1281,7 +1264,6 @@ static void _setup_ctl_ops(struct sde_hw_ctl_ops *ops,
 			sde_hw_ctl_update_bitmask_periph_v1;
 		ops->get_ctl_intf = sde_hw_ctl_get_intf_v1;
 		ops->reset_post_disable = sde_hw_ctl_reset_post_disable;
-		ops->get_scheduler_status = sde_hw_ctl_get_scheduler_status;
 	} else {
 		ops->update_pending_flush = sde_hw_ctl_update_pending_flush;
 		ops->trigger_flush = sde_hw_ctl_trigger_flush;
