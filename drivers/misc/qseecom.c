@@ -1,7 +1,7 @@
 /*
  * QTI Secure Execution Environment Communicator (QSEECOM) driver
  *
- * Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -191,13 +191,6 @@ struct sglist_info {
 
 #define MAKE_WHITELIST_VERSION(major, minor, patch) \
 	(((major & 0x3FF) << 22) | ((minor & 0x3FF) << 12) | (patch & 0xFFF))
-
-#define MAKE_NULL(sgt, attach, dmabuf) do {\
-				sgt = NULL;\
-				attach = NULL;\
-				dmabuf = NULL;\
-				} while (0)
-
 
 struct qseecom_registered_listener_list {
 	struct list_head                 list;
@@ -1274,7 +1267,6 @@ static int qseecom_vaddr_map(int ion_fd,
 err_unmap:
 	dma_buf_end_cpu_access(new_dma_buf, DMA_BIDIRECTIONAL);
 	qseecom_dmabuf_unmap(new_sgt, new_attach, new_dma_buf);
-	MAKE_NULL(*sgt, *attach, *dmabuf);
 err:
 	return ret;
 }
@@ -1349,11 +1341,9 @@ static int __qseecom_set_sb_memory(struct qseecom_registered_listener_list *svc,
 	}
 	return 0;
 err:
-	if (svc->dmabuf) {
+	if (svc->dmabuf)
 		qseecom_vaddr_unmap(svc->sb_virt, svc->sgt, svc->attach,
 			svc->dmabuf);
-		 MAKE_NULL(svc->sgt, svc->attach, svc->dmabuf);
-	}
 	return ret;
 }
 
@@ -1373,6 +1363,8 @@ static int qseecom_register_listener(struct qseecom_dev_handle *data,
 	if (!access_ok(VERIFY_WRITE, (void __user *)rcvd_lstnr.virt_sb_base,
 			rcvd_lstnr.sb_size))
 		return -EFAULT;
+
+	data->listener.id = rcvd_lstnr.listener_id;
 
 	ptr_svc = __qseecom_find_svc(rcvd_lstnr.listener_id);
 	if (ptr_svc) {
@@ -1421,7 +1413,6 @@ static int qseecom_register_listener(struct qseecom_dev_handle *data,
 	new_entry->listener_in_use = false;
 	list_add_tail(&new_entry->list, &qseecom.registered_listener_list_head);
 
-	data->listener.id = rcvd_lstnr.listener_id;
 	pr_debug("Service %d is registered\n", rcvd_lstnr.listener_id);
 	return ret;
 }
@@ -1469,11 +1460,9 @@ static int __qseecom_unregister_listener(struct qseecom_dev_handle *data,
 	}
 
 exit:
-	if (ptr_svc->dmabuf) {
+	if (ptr_svc->dmabuf)
 		qseecom_vaddr_unmap(ptr_svc->sb_virt,
 			ptr_svc->sgt, ptr_svc->attach, ptr_svc->dmabuf);
-		 MAKE_NULL(ptr_svc->sgt, ptr_svc->attach, ptr_svc->dmabuf);
-	}
 
 	list_del(&ptr_svc->list);
 	kzfree(ptr_svc);
@@ -1487,11 +1476,6 @@ static int qseecom_unregister_listener(struct qseecom_dev_handle *data)
 {
 	struct qseecom_registered_listener_list *ptr_svc = NULL;
 	struct qseecom_unregister_pending_list *entry = NULL;
-
-	if (data->released) {
-		pr_err("Don't unregister lsnr %d\n", data->listener.id);
-		return -EINVAL;
-	}
 
 	ptr_svc = __qseecom_find_svc(data->listener.id);
 	if (!ptr_svc) {
@@ -1878,12 +1862,9 @@ static int qseecom_set_client_mem_param(struct qseecom_dev_handle *data,
 
 	return ret;
 exit:
-	if (data->client.dmabuf) {
+	if (data->client.dmabuf)
 		qseecom_vaddr_unmap(data->client.sb_virt, data->client.sgt,
 			 data->client.attach, data->client.dmabuf);
-		MAKE_NULL(data->client.sgt,
-			data->client.attach, data->client.dmabuf);
-	}
 	return ret;
 }
 
@@ -2813,10 +2794,8 @@ static int qseecom_load_app(struct qseecom_dev_handle *data, void __user *argp)
 
 loadapp_err:
 	__qseecom_disable_clk_scale_down(data);
-	if (dmabuf) {
+	if (dmabuf)
 		qseecom_vaddr_unmap(vaddr, sgt, attach, dmabuf);
-		MAKE_NULL(sgt, attach, dmabuf);
-	}
 enable_clk_err:
 	if (qseecom.support_bus_scaling) {
 		mutex_lock(&qsee_bw_mutex);
@@ -2994,12 +2973,9 @@ unload_exit:
 								flags1);
 	}
 
-	if (data->client.dmabuf) {
+	if (data->client.dmabuf)
 		qseecom_vaddr_unmap(data->client.sb_virt, data->client.sgt,
 			data->client.attach, data->client.dmabuf);
-		MAKE_NULL(data->client.sgt,
-			data->client.attach, data->client.dmabuf);
-	}
 	data->released = true;
 	return ret;
 }
@@ -3578,59 +3554,53 @@ static int qseecom_send_cmd(struct qseecom_dev_handle *data, void __user *argp)
 
 int __boundary_checks_offset(struct qseecom_send_modfd_cmd_req *req,
 			struct qseecom_send_modfd_listener_resp *lstnr_resp,
-			struct qseecom_dev_handle *data, int i, size_t size)
+			struct qseecom_dev_handle *data, int i)
 {
-	char *curr_field = NULL;
-	char *temp_field = NULL;
-	int j = 0;
 
 	if ((data->type != QSEECOM_LISTENER_SERVICE) &&
 						(req->ifd_data[i].fd > 0)) {
-		if ((req->cmd_req_len < size) ||
+		if ((req->cmd_req_len < sizeof(uint32_t)) ||
 			(req->ifd_data[i].cmd_buf_offset >
-			req->cmd_req_len - size)) {
+			req->cmd_req_len - sizeof(uint32_t))) {
 			pr_err("Invalid offset (req len) 0x%x\n",
 				req->ifd_data[i].cmd_buf_offset);
 			return -EINVAL;
 		}
-
-		curr_field = (char *) (req->cmd_req_buf +
-				req->ifd_data[i].cmd_buf_offset);
-		for (j = 0; j < MAX_ION_FD; j++) {
-			if ((req->ifd_data[j].fd > 0) && i != j) {
-				temp_field = (char *) (req->cmd_req_buf +
-					req->ifd_data[j].cmd_buf_offset);
-				if (temp_field >= curr_field && temp_field <
-					(curr_field + size)) {
-					pr_err("Invalid field offset 0x%x\n",
-					req->ifd_data[i].cmd_buf_offset);
-					return -EINVAL;
-				}
-			}
-		}
 	} else if ((data->type == QSEECOM_LISTENER_SERVICE) &&
 					(lstnr_resp->ifd_data[i].fd > 0)) {
-		if ((lstnr_resp->resp_len < size) ||
+		if ((lstnr_resp->resp_len < sizeof(uint32_t)) ||
 			(lstnr_resp->ifd_data[i].cmd_buf_offset >
-			lstnr_resp->resp_len - size)) {
+			lstnr_resp->resp_len - sizeof(uint32_t))) {
 			pr_err("Invalid offset (lstnr resp len) 0x%x\n",
 				lstnr_resp->ifd_data[i].cmd_buf_offset);
 			return -EINVAL;
 		}
+	}
+	return 0;
+}
 
-		curr_field = (char *) (lstnr_resp->resp_buf_ptr +
+static int __boundary_checks_offset_64(struct qseecom_send_modfd_cmd_req *req,
+			struct qseecom_send_modfd_listener_resp *lstnr_resp,
+			struct qseecom_dev_handle *data, int i)
+{
+
+	if ((data->type != QSEECOM_LISTENER_SERVICE) &&
+						(req->ifd_data[i].fd > 0)) {
+		if ((req->cmd_req_len < sizeof(uint64_t)) ||
+			(req->ifd_data[i].cmd_buf_offset >
+			req->cmd_req_len - sizeof(uint64_t))) {
+			pr_err("Invalid offset (req len) 0x%x\n",
+				req->ifd_data[i].cmd_buf_offset);
+			return -EINVAL;
+		}
+	} else if ((data->type == QSEECOM_LISTENER_SERVICE) &&
+					(lstnr_resp->ifd_data[i].fd > 0)) {
+		if ((lstnr_resp->resp_len < sizeof(uint64_t)) ||
+			(lstnr_resp->ifd_data[i].cmd_buf_offset >
+			lstnr_resp->resp_len - sizeof(uint64_t))) {
+			pr_err("Invalid offset (lstnr resp len) 0x%x\n",
 				lstnr_resp->ifd_data[i].cmd_buf_offset);
-		for (j = 0; j < MAX_ION_FD; j++) {
-			if ((lstnr_resp->ifd_data[j].fd > 0) && i != j) {
-				temp_field = (char *) lstnr_resp->resp_buf_ptr +
-					lstnr_resp->ifd_data[j].cmd_buf_offset;
-				if (temp_field >= curr_field && temp_field <
-					(curr_field + size)) {
-					pr_err("Invalid lstnr field offset 0x%x\n",
-					lstnr_resp->ifd_data[i].cmd_buf_offset);
-					return -EINVAL;
-				}
-			}
+			return -EINVAL;
 		}
 	}
 	return 0;
@@ -3706,10 +3676,8 @@ static int __qseecom_update_cmd_buf(void *msg, bool cleanup,
 		if (sg_ptr->nents == 1) {
 			uint32_t *update;
 
-			if (__boundary_checks_offset(req, lstnr_resp, data, i,
-				sizeof(uint32_t)))
+			if (__boundary_checks_offset(req, lstnr_resp, data, i))
 				goto err;
-
 			if ((data->type == QSEECOM_CLIENT_APP &&
 				(data->client.app_arch == ELFCLASS32 ||
 				data->client.app_arch == ELFCLASS64)) ||
@@ -3740,10 +3708,30 @@ static int __qseecom_update_cmd_buf(void *msg, bool cleanup,
 			struct qseecom_sg_entry *update;
 			int j = 0;
 
-			if (__boundary_checks_offset(req, lstnr_resp, data, i,
-				(SG_ENTRY_SZ * sg_ptr->nents)))
-				goto err;
+			if ((data->type != QSEECOM_LISTENER_SERVICE) &&
+					(req->ifd_data[i].fd > 0)) {
 
+				if ((req->cmd_req_len <
+					 SG_ENTRY_SZ * sg_ptr->nents) ||
+					(req->ifd_data[i].cmd_buf_offset >
+						(req->cmd_req_len -
+						SG_ENTRY_SZ * sg_ptr->nents))) {
+					pr_err("Invalid offset = 0x%x\n",
+					req->ifd_data[i].cmd_buf_offset);
+					goto err;
+				}
+
+			} else if ((data->type == QSEECOM_LISTENER_SERVICE) &&
+					(lstnr_resp->ifd_data[i].fd > 0)) {
+
+				if ((lstnr_resp->resp_len <
+						SG_ENTRY_SZ * sg_ptr->nents) ||
+				(lstnr_resp->ifd_data[i].cmd_buf_offset >
+						(lstnr_resp->resp_len -
+						SG_ENTRY_SZ * sg_ptr->nents))) {
+					goto err;
+				}
+			}
 			if ((data->type == QSEECOM_CLIENT_APP &&
 				(data->client.app_arch == ELFCLASS32 ||
 				data->client.app_arch == ELFCLASS64)) ||
@@ -3822,10 +3810,8 @@ static int __qseecom_update_cmd_buf(void *msg, bool cleanup,
 	}
 	return ret;
 err:
-	if (!IS_ERR_OR_NULL(sg_ptr)) {
+	if (!IS_ERR_OR_NULL(sg_ptr))
 		qseecom_dmabuf_unmap(sg_ptr, attach, dmabuf);
-		MAKE_NULL(sg_ptr, attach, dmabuf);
-	}
 	return -ENOMEM;
 }
 
@@ -3963,10 +3949,9 @@ static int __qseecom_update_cmd_buf_64(void *msg, bool cleanup,
 		if (sg_ptr->nents == 1) {
 			uint64_t *update_64bit;
 
-			if (__boundary_checks_offset(req, lstnr_resp, data, i,
-				sizeof(uint64_t)))
+			if (__boundary_checks_offset_64(req, lstnr_resp,
+							data, i))
 				goto err;
-
 				/* 64bit app uses 64bit address */
 			update_64bit = (uint64_t *) field;
 			*update_64bit = cleanup ? 0 :
@@ -3976,9 +3961,30 @@ static int __qseecom_update_cmd_buf_64(void *msg, bool cleanup,
 			struct qseecom_sg_entry_64bit *update_64bit;
 			int j = 0;
 
-			if (__boundary_checks_offset(req, lstnr_resp, data, i,
-				(SG_ENTRY_SZ_64BIT * sg_ptr->nents)))
-				goto err;
+			if ((data->type != QSEECOM_LISTENER_SERVICE) &&
+					(req->ifd_data[i].fd > 0)) {
+
+				if ((req->cmd_req_len <
+					 SG_ENTRY_SZ_64BIT * sg_ptr->nents) ||
+					(req->ifd_data[i].cmd_buf_offset >
+					(req->cmd_req_len -
+					SG_ENTRY_SZ_64BIT * sg_ptr->nents))) {
+					pr_err("Invalid offset = 0x%x\n",
+					req->ifd_data[i].cmd_buf_offset);
+					goto err;
+				}
+
+			} else if ((data->type == QSEECOM_LISTENER_SERVICE) &&
+					(lstnr_resp->ifd_data[i].fd > 0)) {
+
+				if ((lstnr_resp->resp_len <
+					SG_ENTRY_SZ_64BIT * sg_ptr->nents) ||
+				(lstnr_resp->ifd_data[i].cmd_buf_offset >
+						(lstnr_resp->resp_len -
+					SG_ENTRY_SZ_64BIT * sg_ptr->nents))) {
+					goto err;
+				}
+			}
 			/* 64bit app uses 64bit address */
 			update_64bit = (struct qseecom_sg_entry_64bit *)field;
 			for (j = 0; j < sg_ptr->nents; j++) {
@@ -4043,10 +4049,8 @@ err:
 				data->client.sec_buf_fd[i].size,
 				data->client.sec_buf_fd[i].vbase,
 				data->client.sec_buf_fd[i].pbase);
-	if (!IS_ERR_OR_NULL(sg_ptr)) {
+	if (!IS_ERR_OR_NULL(sg_ptr))
 		qseecom_dmabuf_unmap(sg_ptr, attach, dmabuf);
-		MAKE_NULL(sg_ptr, attach, dmabuf);
-	}
 	return -ENOMEM;
 }
 
@@ -5598,10 +5602,8 @@ exit_register_bus_bandwidth_needs:
 	}
 
 exit_cpu_restore:
-	if (dmabuf) {
+	if (dmabuf)
 		qseecom_vaddr_unmap(va, sgt, attach, dmabuf);
-		MAKE_NULL(sgt, attach, dmabuf);
-	}
 	return ret;
 }
 
@@ -6867,10 +6869,8 @@ clean:
 	}
 	return ret;
 err:
-	if (!IS_ERR_OR_NULL(sg_ptr)) {
+	if (!IS_ERR_OR_NULL(sg_ptr))
 		qseecom_dmabuf_unmap(sg_ptr, attach, dmabuf);
-		MAKE_NULL(sg_ptr, attach, dmabuf);
-	}
 	return -ENOMEM;
 }
 
@@ -8002,10 +8002,9 @@ static int qseecom_release(struct inode *inode, struct file *file)
 		switch (data->type) {
 		case QSEECOM_LISTENER_SERVICE:
 			pr_debug("release lsnr svc %d\n", data->listener.id);
+			free_private_data = false;
 			mutex_lock(&listener_access_lock);
 			ret = qseecom_unregister_listener(data);
-			if (!ret)
-				free_private_data = false;
 			data->listener.release_called = true;
 			mutex_unlock(&listener_access_lock);
 			break;
@@ -8016,13 +8015,10 @@ static int qseecom_release(struct inode *inode, struct file *file)
 			break;
 		case QSEECOM_SECURE_SERVICE:
 		case QSEECOM_GENERIC:
-			if (data->client.dmabuf) {
+			if (data->client.dmabuf)
 				qseecom_vaddr_unmap(data->client.sb_virt,
 					data->client.sgt, data->client.attach,
 					data->client.dmabuf);
-				MAKE_NULL(data->client.sgt, data->client.attach,
-					data->client.dmabuf);
-			}
 			break;
 		case QSEECOM_UNAVAILABLE_CLIENT_APP:
 			break;
