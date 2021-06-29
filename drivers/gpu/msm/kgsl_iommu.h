@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -63,9 +63,6 @@
 #define KGSL_IOMMU_SCTLR_CFCFG_SHIFT		7
 #define KGSL_IOMMU_SCTLR_CFIE_SHIFT		6
 
-/* FSR fields */
-#define KGSL_IOMMU_FSR_SS_SHIFT		30
-
 enum kgsl_iommu_reg_map {
 	KGSL_IOMMU_CTX_SCTLR = 0,
 	KGSL_IOMMU_CTX_TTBR0,
@@ -102,8 +99,8 @@ enum kgsl_iommu_context_id {
  * @cb_num: The hardware context bank number, used for calculating register
  *		offsets.
  * @kgsldev: The kgsl device that uses this context.
- * @stalled_on_fault: Flag when set indicates that this iommu device is stalled
- * on a page fault
+ * @fault: Flag when set indicates that this iommu device has caused a page
+ * fault
  * @gpu_offset: Offset of this context bank in the GPU register space
  * @default_pt: The default pagetable for this context,
  *		it may be changed by self programming.
@@ -114,7 +111,7 @@ struct kgsl_iommu_context {
 	enum kgsl_iommu_context_id id;
 	unsigned int cb_num;
 	struct kgsl_device *kgsldev;
-	bool stalled_on_fault;
+	int fault;
 	void __iomem *regbase;
 	unsigned int gpu_offset;
 	struct kgsl_pagetable *default_pt;
