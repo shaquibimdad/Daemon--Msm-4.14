@@ -634,9 +634,6 @@ int diag_process_stm_cmd(unsigned char *buf, int len, unsigned char *dest_buf)
 		if (mask & DIAG_STM_CDSP)
 			diag_process_stm_mask(cmd, DIAG_STM_CDSP,
 						PERIPHERAL_CDSP);
-		if (mask & DIAG_STM_NPU)
-			diag_process_stm_mask(cmd, DIAG_STM_NPU,
-						PERIPHERAL_NPU);
 
 		if (mask & DIAG_STM_APPS)
 			diag_process_stm_mask(cmd, DIAG_STM_APPS, APPS_DATA);
@@ -661,9 +658,6 @@ int diag_process_stm_cmd(unsigned char *buf, int len, unsigned char *dest_buf)
 	if (driver->feature[PERIPHERAL_CDSP].stm_support)
 		rsp_supported |= DIAG_STM_CDSP;
 
-	if (driver->feature[PERIPHERAL_NPU].stm_support)
-		rsp_supported |= DIAG_STM_NPU;
-
 	rsp_supported |= DIAG_STM_APPS;
 
 	/* Set mask denoting STM state/status for each peripheral/APSS */
@@ -681,9 +675,6 @@ int diag_process_stm_cmd(unsigned char *buf, int len, unsigned char *dest_buf)
 
 	if (driver->stm_state[PERIPHERAL_CDSP])
 		rsp_status |= DIAG_STM_CDSP;
-
-	if (driver->stm_state[PERIPHERAL_NPU])
-		rsp_status |= DIAG_STM_NPU;
 
 	if (driver->stm_state[APPS_DATA])
 		rsp_status |= DIAG_STM_APPS;
@@ -1841,8 +1832,9 @@ static int diagfwd_mux_write_done(unsigned char *buf, int len, int buf_ctxt,
 				  int ctxt)
 {
 	unsigned long flags;
-	int peripheral = -1, type = -1;
-	int num = -1, hdlc_ctxt = -1;
+	int peripheral = -1;
+	int type = -1;
+	int num = -1;
 	struct diag_apps_data_t *temp = NULL;
 
 	if (!buf || len < 0)
@@ -1862,19 +1854,16 @@ static int diagfwd_mux_write_done(unsigned char *buf, int len, int buf_ctxt,
 			diag_ws_on_copy(DIAG_WS_MUX);
 		} else if (peripheral == APPS_DATA) {
 			spin_lock_irqsave(&driver->diagmem_lock, flags);
-			hdlc_ctxt = GET_HDLC_CTXT(buf_ctxt);
-			if ((hdlc_ctxt == HDLC_CTXT) && hdlc_data.allocated)
+			if (hdlc_data.allocated)
 				temp = &hdlc_data;
-			else if ((hdlc_ctxt == NON_HDLC_CTXT) &&
-				non_hdlc_data.allocated)
+			else if (non_hdlc_data.allocated)
 				temp = &non_hdlc_data;
 			else
 				DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
 				"No apps data buffer is allocated to be freed\n");
 			if (temp) {
 				DIAG_LOG(DIAG_DEBUG_PERIPHERALS,
-				"Freeing Apps data buffer after write done hdlc_ctxt: %d, hdlc.allocated: %d, non_hdlc.allocated: %d\n",
-				hdlc_ctxt,
+				"Freeing Apps data buffer after write done hdlc.allocated: %d, non_hdlc.allocated: %d\n",
 				hdlc_data.allocated, non_hdlc_data.allocated);
 				diagmem_free(driver, temp->buf, POOL_TYPE_HDLC);
 				temp->buf = NULL;
