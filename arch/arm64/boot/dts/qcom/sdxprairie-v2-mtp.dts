@@ -14,7 +14,6 @@
 
 #include "sdxprairie-v2.dtsi"
 #include "sdxprairie-mtp.dtsi"
-#include "sdxprairie-bluetooth.dtsi"
 
 / {
 	model = "Qualcomm Technologies, Inc. SDXPRAIRIE MTP V2";
@@ -22,3 +21,5 @@
 		"qcom,sdxprairie", "qcom,mtp";
 	qcom,board-id = <0x5010008 0x0>;
 };
+
+

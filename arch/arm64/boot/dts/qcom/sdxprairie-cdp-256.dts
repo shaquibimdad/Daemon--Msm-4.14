@@ -14,7 +14,6 @@
 
 #include "sdxprairie.dtsi"
 #include "sdxprairie-cdp-256.dtsi"
-#include "sdxprairie-bluetooth.dtsi"
 
 / {
 	model = "Qualcomm Technologies, Inc. SDXPRAIRIE CDP(256MB)";
@@ -27,3 +26,6 @@
 	status = "ok";
 };
 
+&blsp1_uart2b_hs {
+	status = "okay";
+};
