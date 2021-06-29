@@ -1,4 +1,4 @@
-/* Copyright (c) 2019-2021 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -10,7 +10,6 @@
  * GNU General Public License for more details.
  */
 
-#include <linux/of.h>
 #include <linux/pci.h>
 
 #include <linux/gfp.h>
@@ -21,56 +20,18 @@
 
 #include "atl_fwd.h"
 #include "atl_qcom_ipa.h"
-#include <linux/etherdevice.h>
-#include <net/ip.h>
-#include <uapi/linux/ip.h>
-
-#define IPA_ETH_RX_SOFTIRQ_THRESH	16
-
-#if ATL_FWD_API_VERSION >= 2 && IPA_ETH_API_VER >= 4
-#define ATL_IPA_SUPPORT_NOTIFY
-#endif
-
-#define ATL_IPA_TX_DATA_OT_MIN 1
-#define ATL_IPA_TX_DATA_OT_MAX 16
-
-#define ATL_IPA_TX_DESC_OT_MIN 1
-#define ATL_IPA_TX_DESC_OT_MAX 8
-
-#define ATL_IPA_TX_DMA_CTRL2 0x7B04
-
-struct atl_ipa_device {
-	struct atl_nic *atl_nic;
-	struct ipa_eth_device *eth_dev;
-	struct notifier_block fwd_notify_nb;
-
-	u32 tx_ot_data;
-	u32 tx_ot_desc;
-};
-
-/* Initialize custom hardware settings */
-static void atl_ipa_init_hw(struct atl_ipa_device *ai_dev)
-{
-	struct atl_hw *hw = &ai_dev->atl_nic->hw;
-
-	if (ai_dev->tx_ot_desc)
-		atl_write_bits(hw,
-			       ATL_IPA_TX_DMA_CTRL2, 0, 8, ai_dev->tx_ot_desc);
-
-	if (ai_dev->tx_ot_data)
-		atl_write_bits(hw,
-			       ATL_IPA_TX_DMA_CTRL2, 8, 8, ai_dev->tx_ot_data);
-}
 
 static inline struct atl_fwd_ring *CH_RING(struct ipa_eth_channel *ch)
 {
 	return (struct atl_fwd_ring *)(ch->nd_priv);
 }
 
-static void *atl_ipa_dma_alloc(struct ipa_eth_device *eth_dev,
-			       size_t size, dma_addr_t *daddr, gfp_t gfp,
+static void *atl_ipa_dma_alloc(struct device *dev, size_t size,
+			       dma_addr_t *daddr, gfp_t gfp,
 			       struct ipa_eth_dma_allocator *dma_allocator)
 {
+	struct atl_nic *nic = (struct atl_nic *)dev_get_drvdata(dev);
+	struct ipa_eth_device *eth_dev = nic->fwd.private;
 	struct ipa_eth_resource mem;
 
 	if (dma_allocator->alloc(eth_dev, size, gfp, &mem))
@@ -82,10 +43,12 @@ static void *atl_ipa_dma_alloc(struct ipa_eth_device *eth_dev,
 	return mem.vaddr;
 }
 
-static void atl_ipa_dma_free(void *buf, struct ipa_eth_device *eth_dev,
-			     size_t size, dma_addr_t daddr,
+static void atl_ipa_dma_free(void *buf, struct device *dev, size_t size,
+			     dma_addr_t daddr,
 			     struct ipa_eth_dma_allocator *dma_allocator)
 {
+	struct atl_nic *nic = (struct atl_nic *)dev_get_drvdata(dev);
+	struct ipa_eth_device *eth_dev = nic->fwd.private;
 	struct ipa_eth_resource mem = {
 		.size = size,
 		.vaddr = buf,
@@ -101,7 +64,7 @@ static void *atl_ipa_alloc_descs(struct device *dev, size_t size,
 {
 	struct ipa_eth_channel *ch = ops->private;
 
-	return atl_ipa_dma_alloc(ch->eth_dev, size, daddr, gfp,
+	return atl_ipa_dma_alloc(dev, size, daddr, gfp,
 			ch->mem_params.desc.allocator);
 }
 
@@ -111,7 +74,7 @@ static void *atl_ipa_alloc_buf(struct device *dev, size_t size,
 {
 	struct ipa_eth_channel *ch = ops->private;
 
-	return atl_ipa_dma_alloc(ch->eth_dev, size, daddr, gfp,
+	return atl_ipa_dma_alloc(dev, size, daddr, gfp,
 			ch->mem_params.buff.allocator);
 }
 
@@ -120,7 +83,7 @@ static void atl_ipa_free_descs(void *buf, struct device *dev, size_t size,
 {
 	struct ipa_eth_channel *ch = ops->private;
 
-	return atl_ipa_dma_free(buf, ch->eth_dev, size, daddr,
+	return atl_ipa_dma_free(buf, dev, size, daddr,
 			ch->mem_params.desc.allocator);
 }
 
@@ -129,114 +92,37 @@ static void atl_ipa_free_buf(void *buf, struct device *dev, size_t size,
 {
 	struct ipa_eth_channel *ch = ops->private;
 
-	return atl_ipa_dma_free(buf, ch->eth_dev, size, daddr,
+	return atl_ipa_dma_free(buf, dev, size, daddr,
 			ch->mem_params.desc.allocator);
 }
 
-#ifdef ATL_IPA_SUPPORT_NOTIFY
-static int atl_ipa_fwd_notification(struct notifier_block *nb,
-				    unsigned long action, void *data)
-{
-	enum atl_fwd_notify notif = action;
-	struct atl_ipa_device *ai_dev = container_of(
-		nb, struct atl_ipa_device, fwd_notify_nb);
-
-	switch (notif) {
-	case ATL_FWD_NOTIFY_RESET_PREPARE:
-		ipa_eth_device_notify(ai_dev->eth_dev,
-				      IPA_ETH_DEV_RESET_PREPARE, NULL);
-		break;
-	case ATL_FWD_NOTIFY_RESET_COMPLETE:
-		atl_ipa_init_hw(ai_dev);
-		ipa_eth_device_notify(ai_dev->eth_dev,
-				      IPA_ETH_DEV_RESET_COMPLETE, NULL);
-		break;
-	case ATL_FWD_NOTIFY_MACSEC_ON:
-		ipa_eth_device_notify(ai_dev->eth_dev,
-				      IPA_ETH_DEV_ADD_MACSEC_IF, data);
-		break;
-	case ATL_FWD_NOTIFY_MACSEC_OFF:
-		ipa_eth_device_notify(ai_dev->eth_dev,
-				      IPA_ETH_DEV_DEL_MACSEC_IF, data);
-		break;
-	default:
-		return NOTIFY_DONE;
-	}
-
-	return NOTIFY_OK;
-}
-#endif
-
 static int atl_ipa_open_device(struct ipa_eth_device *eth_dev)
 {
-	struct atl_ipa_device *ai_dev;
 	struct atl_nic *nic = (struct atl_nic *)dev_get_drvdata(eth_dev->dev);
-	struct device_node *np = dev_of_node(eth_dev->dev);
 
 	if (!nic || !nic->ndev) {
 		dev_err(eth_dev->dev, "Invalid atl_nic\n");
 		return -ENODEV;
 	}
 
-	ai_dev = kzalloc(sizeof(*ai_dev), GFP_KERNEL);
-	if (!ai_dev)
-		return -ENOMEM;
+	nic->fwd.private = eth_dev;
 
 	/* atl specific init, ref counting go here */
 
-	ai_dev->atl_nic = nic;
-	ai_dev->eth_dev = eth_dev;
-
-	eth_dev->nd_priv = ai_dev;
+	eth_dev->nd_priv = nic;
 	eth_dev->net_dev = nic->ndev;
-
-#ifdef ATL_IPA_SUPPORT_NOTIFY
-	ai_dev->fwd_notify_nb.notifier_call = atl_ipa_fwd_notification;
-
-	if (atl_fwd_register_notifier(nic->ndev, &ai_dev->fwd_notify_nb)) {
-		dev_err(eth_dev->dev, "Failed to register notifier\n");
-
-		eth_dev->nd_priv = NULL;
-		eth_dev->net_dev = NULL;
-		kfree(ai_dev);
-
-		return -EFAULT;
-	}
-#endif
-
-	if (!of_property_read_u32(np, "qcom,tx-ot-data", &ai_dev->tx_ot_data)) {
-		ai_dev->tx_ot_data = clamp_val(ai_dev->tx_ot_data,
-					       ATL_IPA_TX_DATA_OT_MIN,
-					       ATL_IPA_TX_DATA_OT_MAX);
-		dev_dbg(eth_dev->dev, "Tx DATA OT is %u\n", ai_dev->tx_ot_data);
-	}
-
-	if (!of_property_read_u32(np, "qcom,tx-ot-desc", &ai_dev->tx_ot_desc)) {
-		ai_dev->tx_ot_desc = clamp_val(ai_dev->tx_ot_desc,
-					       ATL_IPA_TX_DESC_OT_MIN,
-					       ATL_IPA_TX_DESC_OT_MAX);
-		dev_dbg(eth_dev->dev, "Tx DESC OT is %u\n", ai_dev->tx_ot_desc);
-	}
-
-	atl_ipa_init_hw(ai_dev);
 
 	return 0;
 }
 
 static void atl_ipa_close_device(struct ipa_eth_device *eth_dev)
 {
-	struct atl_ipa_device *ai_dev = eth_dev->nd_priv;
+	struct atl_nic *nic = eth_dev->nd_priv;
 
-#ifdef ATL_IPA_SUPPORT_NOTIFY
-	atl_fwd_unregister_notifier(ai_dev->atl_nic->ndev,
-				    &ai_dev->fwd_notify_nb);
-#endif
+	nic->fwd.private = NULL;
 
 	eth_dev->nd_priv = NULL;
 	eth_dev->net_dev = NULL;
-
-	memset(ai_dev, 0, sizeof(ai_dev));
-	kfree(ai_dev);
 }
 
 static struct ipa_eth_channel *atl_ipa_request_channel(
@@ -474,8 +360,6 @@ static void atl_ipa_release_event(struct ipa_eth_channel *ch,
 	/* An atl ring can have only one associated event */
 	atl_fwd_release_event(event);
 
-	kfree(event);
-
 	dma_unmap_resource(eth_dev->dev,
 			   daddr, sizeof(u32), DMA_FROM_DEVICE, 0);
 }
@@ -501,37 +385,10 @@ int atl_ipa_moderate_event(struct ipa_eth_channel *ch, unsigned long event,
 	return atl_fwd_set_ring_intr_mod(CH_RING(ch), min_usecs, max_usecs);
 }
 
-static int atl_ipa_fwd_receive_skb(struct net_device *ndev, struct sk_buff *skb)
-{
-	struct atl_nic *nic = netdev_priv(ndev);
-	struct iphdr *ip;
-
-	ip = (struct iphdr *)&skb->data[ETH_HLEN];
-
-	/* Submit packet to network stack */
-	/* If its a ping packet submit it via rx_ni else use rx */
-	if (ip->protocol == IPPROTO_ICMP) {
-		nic->stats.rx_fwd.packets++;
-		nic->stats.rx_fwd.bytes += skb->len;
-		skb->protocol = eth_type_trans(skb, ndev);
-		return netif_rx_ni(skb);
-	} else if ((nic->stats.rx_fwd.packets %
-		IPA_ETH_RX_SOFTIRQ_THRESH) == 0) {
-		nic->stats.rx_fwd.packets++;
-		nic->stats.rx_fwd.bytes += skb->len;
-		skb->protocol = eth_type_trans(skb, ndev);
-		return netif_rx_ni(skb);
-	} else {
-		return atl_fwd_receive_skb(ndev, skb);
-	}
-}
-
 static int atl_ipa_receive_skb(struct ipa_eth_device *eth_dev,
-			       struct sk_buff *skb, bool in_napi)
+			       struct sk_buff *skb)
 {
-	return in_napi ?
-		atl_fwd_napi_receive_skb(eth_dev->net_dev, skb) :
-		atl_ipa_fwd_receive_skb(eth_dev->net_dev, skb);
+	return atl_fwd_receive_skb(eth_dev->net_dev, skb);
 }
 
 static int atl_ipa_transmit_skb(struct ipa_eth_device *eth_dev,

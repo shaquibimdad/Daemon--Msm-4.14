@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -68,10 +68,6 @@
 #define IPA_UC_FINISH_MAX 6
 #define IPA_UC_WAIT_MIN_SLEEP 1000
 #define IPA_UC_WAII_MAX_SLEEP 1200
-#define IPA_HOLB_TMR_DIS 0x0
-#define IPA_HOLB_TMR_EN 0x1
-#define IPA_HOLB_TMR_VAL 65535
-#define IPA_HOLB_TMR_VAL_4_5 31
 /*
  * The transport descriptor size was changed to GSI_CHAN_RE_SIZE_16B, but
  * IPA users still use sps_iovec size as FIFO element size.
@@ -94,6 +90,7 @@
 #define PC_RESTORE_CONTEXT_ENTERED              0xFACEFACE
 /*Bit pattern for SW to identify PC restoration completed */
 #define PC_RESTORE_CONTEXT_STATUS_SUCCESS       0xCAFECAFE
+
 
 #define IPADBG(fmt, args...) \
 	do { \
@@ -152,19 +149,11 @@
 #define WLAN3_CONS_RX_EP  17
 #define WLAN4_CONS_RX_EP  18
 
-#define IPA_RAM_NAT_OFST \
-	IPA_MEM_PART(nat_tbl_ofst)
-#define IPA_RAM_NAT_SIZE \
-	IPA_MEM_PART(nat_tbl_size)
+#define IPA_RAM_NAT_OFST    0
+#define IPA_RAM_NAT_SIZE    0
 #define IPA_RAM_IPV6CT_OFST 0
 #define IPA_RAM_IPV6CT_SIZE 0
 #define IPA_MEM_CANARY_VAL 0xdeadbeef
-
-#define IS_IPV6CT_MEM_DEV(d) \
-	(((void *) (d) == (void *) &ipa3_ctx->ipv6ct_mem))
-
-#define IS_NAT_MEM_DEV(d) \
-	(((void *) (d) == (void *) &ipa3_ctx->nat_mem))
 
 #define IPA_STATS
 
@@ -245,11 +234,7 @@ enum {
 #define IPA_WDI_CE_RING_RES			5
 #define IPA_WDI_CE_DB_RES			6
 #define IPA_WDI_TX_DB_RES			7
-#define IPA_WDI_TX1_RING_RES		8
-#define IPA_WDI_CE1_RING_RES		9
-#define IPA_WDI_CE1_DB_RES			10
-#define IPA_WDI_TX1_DB_RES			11
-#define IPA_WDI_MAX_RES				12
+#define IPA_WDI_MAX_RES				8
 
 /* use QMAP header reserved bit to identify tethered traffic */
 #define IPA_QMAP_TETH_BIT (1 << 30)
@@ -259,8 +244,6 @@ enum {
 # define outer_flush_range(x, y)
 # define __cpuc_flush_dcache_area __flush_dcache_area
 #endif
-
-#define IPA_APP_VOTE_MAX 500
 
 #define IPA_SMP2P_OUT_CLK_RSP_CMPLT_IDX 0
 #define IPA_SMP2P_OUT_CLK_VOTE_IDX 1
@@ -288,8 +271,6 @@ enum {
 #define IPA_TRANSPORT_PROD_TIMEOUT_MSEC 100
 
 #define IPA3_ACTIVE_CLIENTS_TABLE_BUF_SIZE 4096
-
-#define IPA_UC_ACT_TBL_SIZE 1000
 
 #define IPA3_ACTIVE_CLIENT_LOG_TYPE_EP 0
 #define IPA3_ACTIVE_CLIENT_LOG_TYPE_SIMPLE 1
@@ -452,20 +433,12 @@ enum {
 #define IPA_IOC_MDFY_RT_RULE32 _IOWR(IPA_IOC_MAGIC, \
 				IPA_IOCTL_MDFY_RT_RULE, \
 				compat_uptr_t)
-#define IPA_IOC_GET_NAT_IN_SRAM_INFO32 _IOWR(IPA_IOC_MAGIC, \
-				IPA_IOCTL_GET_NAT_IN_SRAM_INFO, \
-				compat_uptr_t)
-#define IPA_IOC_APP_CLOCK_VOTE32 _IOWR(IPA_IOC_MAGIC, \
-				IPA_IOCTL_APP_CLOCK_VOTE, \
-				compat_uptr_t)
 #endif /* #ifdef CONFIG_COMPAT */
 
 #define IPA_TZ_UNLOCK_ATTRIBUTE 0x0C0311
 #define TZ_MEM_PROTECT_REGION_ID 0x10
 
 #define MBOX_TOUT_MS 100
-
-#define IPA_RULE_CNT_MAX 512
 
 struct ipa3_active_client_htable_entry {
 	struct hlist_node list;
@@ -729,7 +702,6 @@ struct ipa3_hdr_proc_ctx_offset_entry {
  * @link: entry's link in global header table entries list
  * @type: header processing context type
  * @l2tp_params: L2TP parameters
- * @generic_params: generic proc_ctx params
  * @offset_entry: entry's offset
  * @hdr: the header
  * @cookie: cookie used for validity check
@@ -743,7 +715,6 @@ struct ipa3_hdr_proc_ctx_entry {
 	u32 cookie;
 	enum ipa_hdr_proc_type type;
 	struct ipa_l2tp_hdr_proc_ctx_params l2tp_params;
-	struct ipa_eth_II_to_eth_II_ex_procparams generic_params;
 	struct ipa3_hdr_proc_ctx_offset_entry *offset_entry;
 	struct ipa3_hdr_entry *hdr;
 	u32 ref_cnt;
@@ -945,7 +916,7 @@ struct ipa3_ep_context {
 	struct ipa3_wlan_stats wstats;
 	u32 uc_offload_state;
 	u32 gsi_offload_state;
-	atomic_t disconnect_in_progress;
+	bool disconnect_in_progress;
 	u32 qmi_request_sent;
 	u32 eot_in_poll_err;
 	bool ep_delay_set;
@@ -1047,8 +1018,6 @@ struct ipa3_sys_context {
 	struct list_head pending_pkts[GSI_VEID_MAX];
 	atomic_t xmit_eot_cnt;
 	struct tasklet_struct tasklet;
-	bool skip_eot;
-	u32 eob_drop_cnt;
 
 	/* ordering is important - mutable fields go above */
 	struct ipa3_ep_context *ep;
@@ -1196,131 +1165,75 @@ struct ipa3_nat_ipv6ct_tmp_mem {
 
 /**
  * struct ipa3_nat_ipv6ct_common_mem - IPA NAT/IPv6CT memory device
- * @name: the device name
- * @lock: memory mutex
  * @class: pointer to the struct class
  * @dev: the dev_t of the device
  * @cdev: cdev of the device
  * @dev_num: device number
- * @is_nat_mem: is the memory for v4 nat
- * @is_ipv6ct_mem: is the memory for v6 nat
- * @is_dev_init: flag indicating if device is initialized
- * @is_hw_init: flag indicating if the corresponding HW is initialized
- * @is_mapped: flag indicating if memory is mapped
- * @phys_mem_size: the physical size in the shared memory
- * @phys_mem_ofst: the offset in the shared memory
- * @table_alloc_size: size (bytes) of table
  * @vaddr: the virtual address in the system memory
  * @dma_handle: the system memory DMA handle
+ * @phys_mem_size: the physical size in the shared memory
+ * @smem_offset: the offset in the shared memory
+ * @size: memory size
+ * @is_mapped: flag indicating if memory is mapped
+ * @is_sys_mem: flag indicating if memory is sys memory
+ * @is_mem_allocated: flag indicating if the memory is allocated
+ * @is_hw_init: flag indicating if the corresponding HW is initialized
+ * @is_dev_init: flag indicating if device is initialized
+ * @lock: memory mutex
  * @base_address: table virtual address
  * @base_table_addr: base table address
  * @expansion_table_addr: expansion table address
  * @table_entries: num of entries in the base table
  * @expn_table_entries: num of entries in the expansion table
  * @tmp_mem: temporary memory used to always provide HW with a legal memory
+ * @name: the device name
  */
 struct ipa3_nat_ipv6ct_common_mem {
-	char           name[IPA_DEV_NAME_MAX_LEN];
-	struct mutex   lock;
-	struct class  *class;
+	struct class *class;
 	struct device *dev;
-	struct cdev    cdev;
-	dev_t          dev_num;
+	struct cdev cdev;
+	dev_t dev_num;
 
-	bool           is_nat_mem;
-	bool           is_ipv6ct_mem;
+	/* system memory */
+	void *vaddr;
+	dma_addr_t dma_handle;
 
-	bool           is_dev_init;
-	bool           is_hw_init;
-	bool           is_mapped;
+	/* shared memory */
+	u32 phys_mem_size;
+	u32 smem_offset;
 
-	u32            phys_mem_size;
-	u32            phys_mem_ofst;
-	size_t         table_alloc_size;
-
-	void          *vaddr;
-	dma_addr_t     dma_handle;
-	void          *base_address;
-	char          *base_table_addr;
-	char          *expansion_table_addr;
-	u32            table_entries;
-	u32            expn_table_entries;
-
+	size_t size;
+	bool is_mapped;
+	bool is_sys_mem;
+	bool is_mem_allocated;
+	bool is_hw_init;
+	bool is_dev_init;
+	struct mutex lock;
+	void *base_address;
+	char *base_table_addr;
+	char *expansion_table_addr;
+	u32 table_entries;
+	u32 expn_table_entries;
 	struct ipa3_nat_ipv6ct_tmp_mem *tmp_mem;
-};
-
-/**
- * struct ipa3_nat_mem_loc_data - memory specific info per table memory type
- * @is_mapped: has the memory been mapped?
- * @io_vaddr: the virtual address in the sram memory
- * @vaddr: the virtual address in the system memory
- * @dma_handle: the system memory DMA handle
- * @phys_addr: physical sram memory location
- * @table_alloc_size: size (bytes) of table
- * @table_entries: number of entries in table
- * @expn_table_entries: number of entries in expansion table
- * @base_address: same as vaddr above
- * @base_table_addr: base table address
- * @expansion_table_addr: base table's expansion table address
- * @index_table_addr: index table address
- * @index_table_expansion_addr: index table's expansion table address
- */
-struct ipa3_nat_mem_loc_data {
-	bool          is_mapped;
-
-	void __iomem *io_vaddr;
-
-	void         *vaddr;
-	dma_addr_t    dma_handle;
-
-	unsigned long phys_addr;
-
-	size_t        table_alloc_size;
-
-	u32           table_entries;
-	u32           expn_table_entries;
-
-	void         *base_address;
-
-	char         *base_table_addr;
-	char         *expansion_table_addr;
-
-	char         *index_table_addr;
-	char         *index_table_expansion_addr;
+	char name[IPA_DEV_NAME_MAX_LEN];
 };
 
 /**
  * struct ipa3_nat_mem - IPA NAT memory description
  * @dev: the memory device structure
+ * @index_table_addr: index table address
+ * @index_table_expansion_addr: index expansion table address
  * @public_ip_addr: ip address of nat table
  * @pdn_mem: pdn config table SW cache memory structure
  * @is_tmp_mem_allocated: indicate if tmp mem has been allocated
- * @last_alloc_loc: last memory type allocated
- * @active_table: which table memory type is currently active
- * @switch2ddr_cnt: how many times we've switched focust to ddr
- * @switch2sram_cnt: how many times we've switched focust to sram
- * @ddr_in_use: is there table in ddr
- * @sram_in_use: is there table in sram
- * @mem_loc: memory specific info per table memory type
  */
 struct ipa3_nat_mem {
-	struct ipa3_nat_ipv6ct_common_mem dev; /* this item must be first */
-
-	u32                          public_ip_addr;
-	struct ipa_mem_buffer        pdn_mem;
-
-	bool                         is_tmp_mem_allocated;
-
-	enum ipa3_nat_mem_in         last_alloc_loc;
-
-	enum ipa3_nat_mem_in         active_table;
-	u32                          switch2ddr_cnt;
-	u32                          switch2sram_cnt;
-
-	bool                         ddr_in_use;
-	bool                         sram_in_use;
-
-	struct ipa3_nat_mem_loc_data mem_loc[IPA_NAT_MEM_IN_MAX];
+	struct ipa3_nat_ipv6ct_common_mem dev;
+	char *index_table_addr;
+	char *index_table_expansion_addr;
+	u32 public_ip_addr;
+	struct ipa_mem_buffer pdn_mem;
+	bool is_tmp_mem_allocated;
 };
 
 /**
@@ -1328,7 +1241,7 @@ struct ipa3_nat_mem {
  * @dev: the memory device structure
  */
 struct ipa3_ipv6ct_mem {
-	struct ipa3_nat_ipv6ct_common_mem dev; /* this item must be first */
+	struct ipa3_nat_ipv6ct_common_mem dev;
 };
 
 /**
@@ -1382,7 +1295,6 @@ struct ipa3_stats {
 	u32 flow_enable;
 	u32 flow_disable;
 	u32 tx_non_linear;
-	u32 rx_drop_pkts;
 };
 
 /* offset for each stats */
@@ -1392,12 +1304,15 @@ struct ipa3_stats {
 #define IPA3_UC_DEBUG_STATS_RINGUSAGELOW_OFF (12)
 #define IPA3_UC_DEBUG_STATS_RINGUTILCOUNT_OFF (16)
 #define IPA3_UC_DEBUG_STATS_OFF (20)
-#define IPA3_UC_DEBUG_STATS_TRCOUNT_OFF (20)
-#define IPA3_UC_DEBUG_STATS_ERCOUNT_OFF (24)
-#define IPA3_UC_DEBUG_STATS_AOSCOUNT_OFF (28)
-#define IPA3_UC_DEBUG_STATS_BUSYTIME_OFF (32)
-#define IPA3_UC_DEBUG_STATS_RTK_OFF (40)
 
+/**
+ * struct ipa3_uc_dbg_gsi_stats - uC dbg stats info for each
+ * offloading protocol
+ * @ring: ring stats for each channel
+ */
+struct ipa3_uc_dbg_ring_stats {
+	struct IpaHwRingStats_t ring[MAX_CH_STATS_SUPPORTED];
+};
 
 /**
  * struct ipa3_uc_dbg_stats - uC dbg stats for offloading
@@ -1584,20 +1499,6 @@ struct ipa3_mhip_ctx {
 };
 
 /**
- * struct ipa3_aqc_ctx - IPA aqc context
- */
-struct ipa3_aqc_ctx {
-	struct ipa3_uc_dbg_stats dbg_stats;
-};
-
-/**
- * struct ipa3_rtk_ctx - IPA rtk context
- */
-struct ipa3_rtk_ctx {
-	struct ipa3_uc_dbg_stats dbg_stats;
-};
-
-/**
  * struct ipa3_transport_pm - transport power management related members
  * @transport_pm_mutex: Mutex to protect the transport_pm functionality.
  */
@@ -1748,36 +1649,12 @@ struct ipa3_pc_mbox_data {
 	struct mbox_chan *mbox;
 };
 
-struct ipa3_app_clock_vote {
-	struct mutex mutex;
-	u32 cnt;
-};
-
-struct ipa_eth_client_mapping {
-	enum ipa_client_type type;
-	int pipe_id;
-	int pipe_hdl;
-	int ch_id;
-	bool valid;
-};
-
-struct ipa3_eth_info {
-	u8 num_ch;
-	struct ipa_eth_client_mapping map[IPA_MAX_CH_STATS_SUPPORTED];
-};
-
-struct ipa3_eth_error_stats {
-	int rp;
-	int wp;
-	u32 err;
-};
-
-
 /**
  * struct ipa3_context - IPA context
  * @cdev: cdev context
  * @ep: list of all end points
- * @skip_ep_cfg_shadow: state to update filter table correctly across power-save
+ * @skip_ep_cfg_shadow: state to update filter table correctly across
+  power-save
  * @ep_flt_bitmap: End-points supporting filtering bitmap
  * @ep_flt_num: End-points supporting filtering number
  * @resume_on_connect: resume ep on ipa connect
@@ -1795,7 +1672,6 @@ struct ipa3_eth_error_stats {
  * @rt_rule_cache: routing rule cache
  * @hdr_cache: header cache
  * @hdr_offset_cache: header offset cache
- * @fnr_stats_cache: FnR stats cache
  * @hdr_proc_ctx_cache: processing context cache
  * @hdr_proc_ctx_offset_cache: processing context offset cache
  * @rt_tbl_cache: routing table cache
@@ -1837,7 +1713,6 @@ struct ipa3_eth_error_stats {
  * @logbuf_low: ipc log buffer for low priority messages
  * @ipa_wdi2: using wdi-2.0
  * @ipa_fltrt_not_hashable: filter/route rules not hashable
- * @use_xbl_boot: use xbl loading for IPA FW
  * @use_64_bit_dma_mask: using 64bits dma mask
  * @ipa_bus_hdl: msm driver handle for the data path bus
  * @ctrl: holds the core specific operations based on
@@ -1865,10 +1740,7 @@ struct ipa3_eth_error_stats {
  * @flt_rt_counters: the counters usage info for flt rt stats
  * @wdi3_ctx: IPA wdi3 context
  * @gsi_info: channel/protocol info for GSI offloading uC stats
- * @app_vote: holds userspace application clock vote count
- * @ipa_in_cpe_cfg : boolean denotes whether CPE config is enabled
  * IPA context - holds all relevant info about IPA driver and its state
- * @eth_info: ethernet client mapping
  */
 struct ipa3_context {
 	struct ipa3_char_device_context cdev;
@@ -1890,7 +1762,6 @@ struct ipa3_context {
 	struct kmem_cache *rt_rule_cache;
 	struct kmem_cache *hdr_cache;
 	struct kmem_cache *hdr_offset_cache;
-	struct kmem_cache *fnr_stats_cache;
 	struct kmem_cache *hdr_proc_ctx_cache;
 	struct kmem_cache *hdr_proc_ctx_offset_cache;
 	struct kmem_cache *rt_tbl_cache;
@@ -1952,7 +1823,6 @@ struct ipa3_context {
 	bool ipa_wdi3_over_gsi;
 	bool ipa_endp_delay_wa;
 	bool ipa_fltrt_not_hashable;
-	bool use_xbl_boot;
 	bool use_64_bit_dma_mask;
 	/* featurize if memory footprint becomes a concern */
 	struct ipa3_stats stats;
@@ -2028,8 +1898,6 @@ struct ipa3_context {
 	struct ipa3_wdi3_ctx wdi3_ctx;
 	struct ipa3_usb_ctx usb_ctx;
 	struct ipa3_mhip_ctx mhip_ctx;
-	struct ipa3_aqc_ctx aqc_ctx;
-	struct ipa3_rtk_ctx rtk_ctx;
 	atomic_t ipa_clk_vote;
 	int gsi_chk_intset_value;
 	int uc_mailbox17_chk;
@@ -2042,21 +1910,6 @@ struct ipa3_context {
 		gsi_info[IPA_HW_PROTOCOL_MAX];
 	bool ipa_mhi_proxy;
 	bool ipa_wan_skb_page;
-	struct ipa3_app_clock_vote app_clock_vote;
-	struct ipa_mem_buffer uc_act_tbl;
-	bool uc_act_tbl_valid;
-	struct mutex act_tbl_lock;
-	int uc_act_tbl_total;
-	int uc_act_tbl_socksv5_total;
-	int uc_act_tbl_ipv6_nat_total;
-	int uc_act_tbl_next_index;
-	bool ipa_in_cpe_cfg;
-	u32 ipa_wdi3_2g_holb_timeout;
-	u32 ipa_wdi3_5g_holb_timeout;
-	bool is_wdi3_tx1_needed;
-	struct ipa3_eth_info
-		eth_info[IPA_ETH_CLIENT_MAX][IPA_ETH_INST_ID_MAX];
-	bool is_modem_up;
 };
 
 struct ipa3_plat_drv_res {
@@ -2081,7 +1934,6 @@ struct ipa3_plat_drv_res {
 	bool ipa_wdi2_over_gsi;
 	bool ipa_wdi3_over_gsi;
 	bool ipa_fltrt_not_hashable;
-	bool use_xbl_boot;
 	bool use_64_bit_dma_mask;
 	bool use_bw_vote;
 	u32 wan_rx_ring_size;
@@ -2105,9 +1957,6 @@ struct ipa3_plat_drv_res {
 	u32 secure_debug_check_action;
 	bool ipa_mhi_proxy;
 	bool ipa_wan_skb_page;
-	bool ipa_in_cpe_cfg;
-	u32 ipa_wdi3_2g_holb_timeout;
-	u32 ipa_wdi3_5g_holb_timeout;
 };
 
 /**
@@ -2195,6 +2044,10 @@ struct ipa3_plat_drv_res {
  * +-------------------------+
  * | NAT TABLE (IPA4.5)      |
  * +-------------------------+
+ * | NAT IDX TABLE (IPA4.5)  |
+ * +-------------------------+
+ * | NAT EXP TABLE (IPA4.5)  |
+ * +-------------------------+
  * |    CANARY (IPA4.5)      |
  * +-------------------------+
  * |    CANARY (IPA4.5)      |
@@ -2274,6 +2127,10 @@ struct ipa3_mem_partition {
 	u32 apps_hdr_proc_ctx_size_ddr;
 	u32 nat_tbl_ofst;
 	u32 nat_tbl_size;
+	u32 nat_index_tbl_ofst;
+	u32 nat_index_tbl_size;
+	u32 nat_exp_tbl_ofst;
+	u32 nat_exp_tbl_size;
 	u32 modem_comp_decomp_ofst;
 	u32 modem_comp_decomp_size;
 	u32 modem_ofst;
@@ -2301,10 +2158,8 @@ struct ipa3_mem_partition {
 	u32 uc_descriptor_ram_size;
 	u32 pdn_config_ofst;
 	u32 pdn_config_size;
-	u32 stats_quota_q6_ofst;
-	u32 stats_quota_q6_size;
-	u32 stats_quota_ap_ofst;
-	u32 stats_quota_ap_size;
+	u32 stats_quota_ofst;
+	u32 stats_quota_size;
 	u32 stats_tethering_ofst;
 	u32 stats_tethering_size;
 	u32 stats_fnr_ofst;
@@ -2408,8 +2263,6 @@ int ipa3_clear_endpoint_delay(u32 clnt_hdl);
  */
 int ipa3_cfg_ep(u32 clnt_hdl, const struct ipa_ep_cfg *ipa_ep_cfg);
 
-int ipa3_cfg_ep_seq(u32 clnt_hdl, const struct ipa_ep_cfg_seq *seq_cfg);
-
 int ipa3_cfg_ep_nat(u32 clnt_hdl, const struct ipa_ep_cfg_nat *ipa_ep_cfg);
 
 int ipa3_cfg_ep_conn_track(u32 clnt_hdl,
@@ -2431,9 +2284,6 @@ int ipa3_cfg_ep_route(u32 clnt_hdl, const struct ipa_ep_cfg_route *ipa_ep_cfg);
 
 int ipa3_cfg_ep_holb(u32 clnt_hdl, const struct ipa_ep_cfg_holb *ipa_ep_cfg);
 
-int ipa3_force_cfg_ep_holb(u32 clnt_hdl,
-	struct ipa_ep_cfg_holb *ipa_ep_cfg);
-
 void ipa3_cal_ep_holb_scale_base_val(u32 tmr_val,
 				struct ipa_ep_cfg_holb *ep_holb);
 
@@ -2446,21 +2296,6 @@ int ipa3_cfg_ep_holb_by_client(enum ipa_client_type client,
 				const struct ipa_ep_cfg_holb *ipa_ep_cfg);
 
 int ipa3_cfg_ep_ctrl(u32 clnt_hdl, const struct ipa_ep_cfg_ctrl *ep_ctrl);
-
-int ipa3_setup_uc_act_tbl(void);
-
-int ipa3_add_socksv5_conn(struct ipa_socksv5_info *info);
-
-int ipa3_del_socksv5_conn(uint32_t handle);
-
-int ipa3_add_socksv5_conn_usr(struct ipa_kernel_tests_socksv5_uc_tmpl *tmpl);
-
-int ipa3_add_ipv6_nat_uc_activation_entry(
-	struct ipa_ioc_ipv6_nat_uc_act_entry *entry);
-
-int ipa3_del_ipv6_nat_uc_activation_entry(uint16_t index);
-
-int ipa3_del_uc_act_entry(uint16_t index);
 
 /*
  * Header removal / addition
@@ -2583,8 +2418,6 @@ int ipa3_del_nat_table(struct ipa_ioc_nat_ipv6ct_table_del *del);
 int ipa3_del_ipv6ct_table(struct ipa_ioc_nat_ipv6ct_table_del *del);
 
 int ipa3_nat_mdfy_pdn(struct ipa_ioc_nat_pdn_entry *mdfy_pdn);
-int ipa3_nat_get_sram_info(struct ipa_nat_in_sram_info *info_ptr);
-int ipa3_app_clk_vote(enum ipa_app_clock_vote_type vote_type);
 
 /*
  * Messaging
@@ -2660,15 +2493,10 @@ int ipa3_disconnect_gsi_wdi_pipe(u32 clnt_hdl);
 int ipa3_resume_wdi_pipe(u32 clnt_hdl);
 int ipa3_resume_gsi_wdi_pipe(u32 clnt_hdl);
 int ipa3_suspend_wdi_pipe(u32 clnt_hdl);
-void ipa3_get_gsi_stats(int prot_id,
-	struct ipa_uc_dbg_ring_stats *stats);
-int ipa3_get_wdi_gsi_stats(struct ipa_uc_dbg_ring_stats *stats);
-int ipa3_get_wdi3_gsi_stats(struct ipa_uc_dbg_ring_stats *stats);
-int ipa3_get_usb_gsi_stats(struct ipa_uc_dbg_ring_stats *stats);
-int ipa3_get_aqc_gsi_stats(struct ipa_uc_dbg_ring_stats *stats);
-int ipa3_get_rtk_gsi_stats(struct ipa_uc_dbg_ring_stats *stats);
+int ipa3_get_wdi_gsi_stats(struct ipa3_uc_dbg_ring_stats *stats);
+int ipa3_get_wdi3_gsi_stats(struct ipa3_uc_dbg_ring_stats *stats);
+int ipa3_get_usb_gsi_stats(struct ipa3_uc_dbg_ring_stats *stats);
 int ipa3_get_wdi_stats(struct IpaHwStatsWDIInfoData_t *stats);
-int ipa3_get_prot_id(enum ipa_client_type client);
 u16 ipa3_get_smem_restr_bytes(void);
 int ipa3_broadcast_wdi_quota_reach_ind(uint32_t fid, uint64_t num_bytes);
 int ipa3_setup_uc_ntn_pipes(struct ipa_ntn_conn_in_params *in,
@@ -2681,12 +2509,9 @@ void ipa3_ntn_uc_dereg_rdyCB(void);
 int ipa3_conn_wdi3_pipes(struct ipa_wdi_conn_in_params *in,
 	struct ipa_wdi_conn_out_params *out,
 	ipa_wdi_meter_notifier_cb wdi_notify);
-int ipa3_disconn_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx,
-	int ipa_ep_idx_tx1);
-int ipa3_enable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx,
-	int ipa_ep_idx_tx1);
-int ipa3_disable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx,
-	int ipa_ep_idx_tx1);
+int ipa3_disconn_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
+int ipa3_enable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
+int ipa3_disable_wdi3_pipes(int ipa_ep_idx_tx, int ipa_ep_idx_rx);
 
 int ipa3_conn_wigig_rx_pipe_i(void *in,
 	struct ipa_wigig_conn_out_params *out);
@@ -2845,8 +2670,6 @@ u8 ipa3_get_qmb_master_sel(enum ipa_client_type client);
 int ipa3_get_smmu_params(struct ipa_smmu_in_params *in,
 	struct ipa_smmu_out_params *out);
 
-bool ipa3_get_lan_rx_napi(void);
-
 /* internal functions */
 
 int ipa3_bind_api_controller(enum ipa_hw_type ipa_hw_type,
@@ -2873,14 +2696,8 @@ int ipa3_set_single_ndp_per_mbim(bool enable);
 void ipa3_debugfs_pre_init(void);
 void ipa3_debugfs_post_init(void);
 void ipa3_debugfs_remove(void);
-void ipa3_eth_debugfs_init(void);
-void ipa3_eth_debugfs_add(struct ipa_eth_client *client);
 
 void ipa3_dump_buff_internal(void *base, dma_addr_t phy_base, u32 size);
-
-int ipa3_conn_qdss_pipes(struct ipa_qdss_conn_in_params *in,
-	struct ipa_qdss_conn_out_params *out);
-int ipa3_disconn_qdss_pipes(void);
 #ifdef IPA_DEBUG
 #define IPA_DUMP_BUFF(base, phy_base, size) \
 	ipa3_dump_buff_internal(base, phy_base, size)
@@ -2935,7 +2752,6 @@ int ipa3_query_intf(struct ipa_ioc_query_intf *lookup);
 int ipa3_query_intf_tx_props(struct ipa_ioc_query_intf_tx_props *tx);
 int ipa3_query_intf_rx_props(struct ipa_ioc_query_intf_rx_props *rx);
 int ipa3_query_intf_ext_props(struct ipa_ioc_query_intf_ext_props *ext);
-int ipa3_get_max_pdn(void);
 
 void wwan_cleanup(void);
 
@@ -3037,12 +2853,10 @@ int ipa3_uc_memcpy(phys_addr_t dest, phys_addr_t src, int len);
 int ipa3_uc_send_remote_ipa_info(u32 remote_addr, uint32_t mbox_n);
 int ipa3_uc_debug_stats_alloc(
 	struct IpaHwOffloadStatsAllocCmdData_t cmdinfo);
-int ipa3_uc_debug_stats_dealloc(uint32_t prot_id);
+int ipa3_uc_debug_stats_dealloc(uint32_t protocol);
 void ipa3_tag_destroy_imm(void *user1, int user2);
 const struct ipa_gsi_ep_config *ipa3_get_gsi_ep_info
 	(enum ipa_client_type client);
-
-bool ipa3_check_idr_if_freed(void *ptr);
 
 int ipa3_wigig_init_i(void);
 int ipa3_wigig_uc_init(
@@ -3072,8 +2886,6 @@ int ipa_get_quota_stats(struct ipa_quota_stats_all *out);
 int ipa_reset_quota_stats(enum ipa_client_type client);
 
 int ipa_reset_all_quota_stats(void);
-
-int ipa_drop_stats_init(void);
 
 int ipa_init_drop_stats(u32 pipe_bitmask);
 
@@ -3190,30 +3002,7 @@ void ipa_eth_exit(void);
 #else
 static inline int ipa_eth_init(void) { return 0; }
 static inline void ipa_eth_exit(void) { }
-#endif
-void ipa3_eth_debugfs_add_node(struct ipa_eth_client *client);
-int ipa3_eth_rtk_connect(
-	struct ipa_eth_client_pipe_info *pipe,
-	enum ipa_client_type client_type);
-int ipa3_eth_aqc_connect(
-	struct ipa_eth_client_pipe_info *pipe,
-	enum ipa_client_type client_type);
-int ipa3_eth_emac_connect(
-	struct ipa_eth_client_pipe_info *pipe,
-	enum ipa_client_type client_type);
-int ipa3_eth_rtk_disconnect(
-	struct ipa_eth_client_pipe_info *pipe,
-	enum ipa_client_type client_type);
-int ipa3_eth_aqc_disconnect(
-	struct ipa_eth_client_pipe_info *pipe,
-	enum ipa_client_type client_type);
-int ipa3_eth_emac_disconnect(
-	struct ipa_eth_client_pipe_info *pipe,
-	enum ipa_client_type client_type);
-int ipa3_eth_client_conn_evt(struct ipa_ecm_msg *msg);
-int ipa3_eth_client_disconn_evt(struct ipa_ecm_msg *msg);
-void ipa3_eth_get_status(u32 client, int scratch_id,
-	struct ipa3_eth_error_stats *stats);
+#endif // CONFIG_IPA_ETH
 int ipa3_get_gsi_chan_info(struct gsi_chan_info *gsi_chan_info,
 	unsigned long chan_hdl);
 #ifdef CONFIG_IPA3_MHI_PRIME_MANAGER
@@ -3224,8 +3013,8 @@ int ipa3_is_mhip_offload_enabled(void);
 int ipa_mpm_reset_dma_mode(enum ipa_client_type src_pipe,
 	enum ipa_client_type dst_pipe);
 int ipa_mpm_panic_handler(char *buf, int size);
+int ipa3_get_mhip_gsi_stats(struct ipa3_uc_dbg_ring_stats *stats);
 int ipa3_mpm_enable_adpl_over_odl(bool enable);
-int ipa3_get_mhip_gsi_stats(struct ipa_uc_dbg_ring_stats *stats);
 #else
 static inline int ipa_mpm_mhip_xdci_pipe_enable(
 	enum ipa_usb_teth_prot prot)
@@ -3256,7 +3045,7 @@ static inline int ipa_mpm_panic_handler(char *buf, int size)
 	return 0;
 }
 
-static inline int ipa3_get_mhip_gsi_stats(struct ipa_uc_dbg_ring_stats *stats)
+static inline int ipa3_get_mhip_gsi_stats(struct ipa3_uc_dbg_ring_stats *stats)
 {
 	return 0;
 }
@@ -3277,8 +3066,4 @@ static inline void *alloc_and_init(u32 size, u32 init_val)
 bool ipa3_is_apq(void);
 /* check if odl is connected */
 bool ipa3_is_odl_connected(void);
-/* check if modem is up */
-bool ipa3_is_modem_up(void);
-/* set modem is up */
-void ipa3_set_modem_up(bool is_up);
 #endif /* _IPA3_I_H_ */

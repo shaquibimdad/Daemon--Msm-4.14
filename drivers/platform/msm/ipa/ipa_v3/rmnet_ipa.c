@@ -1,4 +1,5 @@
-/* Copyright (c) 2014-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2021 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1478,35 +1479,8 @@ static void apps_ipa_packet_receive_notify(void *priv,
 	}
 }
 
-/* Send MHI endpoint info to modem using QMI indication message */
-static int ipa_send_mhi_endp_ind_to_modem(void)
-{
-	struct ipa_endp_desc_indication_msg_v01 req;
-	struct ipa_ep_id_type_v01 *ep_info;
-	int ipa_mhi_prod_ep_idx =
-		ipa3_get_ep_mapping(IPA_CLIENT_MHI_LOW_LAT_PROD);
-	int ipa_mhi_cons_ep_idx =
-		ipa3_get_ep_mapping(IPA_CLIENT_MHI_LOW_LAT_CONS);
-
-	memset(&req, 0, sizeof(struct ipa_endp_desc_indication_msg_v01));
-	req.ep_info_len = 2;
-	req.ep_info_valid = true;
-	req.num_eps_valid = true;
-	req.num_eps = 2;
-	ep_info = &req.ep_info[0];
-	ep_info->ep_id = ipa_mhi_cons_ep_idx;
-	ep_info->ic_type = DATA_IC_TYPE_MHI_V01;
-	ep_info->ep_type = DATA_EP_DESC_TYPE_EMB_FLOW_CTL_PROD_V01;
-	ep_info->ep_status = DATA_EP_STATUS_CONNECTED_V01;
-	ep_info = &req.ep_info[1];
-	ep_info->ep_id = ipa_mhi_prod_ep_idx;
-	ep_info->ic_type = DATA_IC_TYPE_MHI_V01;
-	ep_info->ep_type = DATA_EP_DESC_TYPE_EMB_FLOW_CTL_CONS_V01;
-	ep_info->ep_status = DATA_EP_STATUS_CONNECTED_V01;
-	return ipa3_qmi_send_endp_desc_indication(&req);
-}
-
 /* Send RSC endpoint info to modem using QMI indication message */
+
 static int ipa_send_rsc_pipe_ind_to_modem(void)
 {
 	struct ipa_endp_desc_indication_msg_v01 req;
@@ -1522,7 +1496,7 @@ static int ipa_send_rsc_pipe_ind_to_modem(void)
 	ep_info->ic_type = DATA_IC_TYPE_AP_V01;
 	ep_info->ep_type = DATA_EP_DESC_TYPE_RSC_PROD_V01;
 	ep_info->ep_status = DATA_EP_STATUS_CONNECTED_V01;
-	return ipa3_qmi_send_endp_desc_indication(&req);
+	return ipa3_qmi_send_rsc_pipe_indication(&req);
 }
 
 static int handle3_ingress_format(struct net_device *dev,
@@ -1668,8 +1642,6 @@ static int handle3_egress_format(struct net_device *dev,
 			rc = ipa3_qmi_set_aggr_info(DATA_AGGR_TYPE_QMAP_V01);
 		}
 		rmnet_ipa3_ctx->ipa_mhi_aggr_formet_set = true;
-		/* register Q6 indication */
-		rc = ipa3_qmi_req_ind();
 		return rc;
 	}
 
@@ -2261,6 +2233,7 @@ static int rmnet_ipa_send_coalesce_notification(uint8_t qmap_id,
 
 int ipa3_wwan_set_modem_state(struct wan_ioctl_notify_wan_state *state)
 {
+	uint32_t bw_mbps = 0;
 	int ret = 0;
 
 	if (!state)
@@ -2269,11 +2242,29 @@ int ipa3_wwan_set_modem_state(struct wan_ioctl_notify_wan_state *state)
 	if (!ipa_pm_is_used())
 		return 0;
 
-	if (state->up)
+	if (state->up) {
+		if (rmnet_ipa3_ctx->ipa_config_is_apq) {
+			bw_mbps = 5200;
+			ret = ipa3_vote_for_bus_bw(&bw_mbps);
+			if (ret) {
+				IPAERR("Failed to vote for bus BW (%u)\n",
+							bw_mbps);
+				return ret;
+			}
+		}
 		ret = ipa_pm_activate_sync(rmnet_ipa3_ctx->q6_teth_pm_hdl);
-	else
+	} else {
+		if (rmnet_ipa3_ctx->ipa_config_is_apq) {
+			bw_mbps = 0;
+			ret = ipa3_vote_for_bus_bw(&bw_mbps);
+			if (ret) {
+				IPAERR("Failed to vote for bus BW (%u)\n",
+							bw_mbps);
+				return ret;
+			}
+		}
 		ret = ipa_pm_deactivate_sync(rmnet_ipa3_ctx->q6_teth_pm_hdl);
-
+	}
 	return ret;
 }
 
@@ -2884,7 +2875,7 @@ static int ipa3_wwan_remove(struct platform_device *pdev)
 {
 	int ret;
 
-	IPAWANINFO("rmnet_ipa started deinitialization\n");
+	IPAWANERR("rmnet_ipa started deinitialization\n");
 	mutex_lock(&rmnet_ipa3_ctx->pipe_handle_guard);
 	ret = ipa3_teardown_sys_pipe(rmnet_ipa3_ctx->ipa3_to_apps_hdl);
 	if (ret < 0)
@@ -2899,9 +2890,8 @@ static int ipa3_wwan_remove(struct platform_device *pdev)
 	if (ipa3_rmnet_res.ipa_napi_enable)
 		netif_napi_del(&(rmnet_ipa3_ctx->wwan_priv->napi));
 	mutex_unlock(&rmnet_ipa3_ctx->pipe_handle_guard);
-	IPAWANDBG("rmnet_ipa unregister_netdev started\n");
+	IPAWANINFO("rmnet_ipa unregister_netdev\n");
 	unregister_netdev(IPA_NETDEV());
-	IPAWANDBG("rmnet_ipa unregister_netdev completed\n");
 	if (ipa3_ctx->use_ipa_pm)
 		ipa3_wwan_deregister_netdev_pm_client();
 	else
@@ -3122,13 +3112,13 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(struct notifier_block *this,
 		break;
 	case SUBSYS_AFTER_SHUTDOWN:
 		IPAWANINFO("IPA Received MPSS AFTER_SHUTDOWN\n");
-		ipa3_set_modem_up(false);
 		if (atomic_read(&rmnet_ipa3_ctx->is_ssr) &&
 			ipa3_ctx->ipa_hw_type < IPA_HW_v4_0)
 			ipa3_q6_post_shutdown_cleanup();
 
 		if (ipa3_ctx->ipa_endp_delay_wa)
 			ipa3_client_prod_post_shutdown_cleanup();
+
 		IPAWANINFO("IPA AFTER_SHUTDOWN handling is complete\n");
 		break;
 	case SUBSYS_BEFORE_POWERUP:
@@ -3140,15 +3130,11 @@ static int ipa3_lcl_mdm_ssr_notifier_cb(struct notifier_block *this,
 		}
 		/* hold a proxy vote for the modem. */
 		ipa3_proxy_clk_vote();
-		if (ipa3_ctx->ipa_config_is_mhi)
-			ipa3_set_reset_client_cons_pipe_sus_holb(false,
-					IPA_CLIENT_MHI_CONS);
 		ipa3_reset_freeze_vote();
 		IPAWANINFO("IPA BEFORE_POWERUP handling is complete\n");
 		break;
 	case SUBSYS_AFTER_POWERUP:
 		IPAWANINFO("IPA received MPSS AFTER_POWERUP\n");
-		ipa3_set_modem_up(true);
 		if (!atomic_read(&rmnet_ipa3_ctx->is_initialized) &&
 		       atomic_read(&rmnet_ipa3_ctx->is_ssr))
 			platform_driver_register(&rmnet_ipa_driver);
@@ -4146,9 +4132,6 @@ void ipa3_q6_handshake_complete(bool ssr_bootup)
 	}
 	if (ipa3_ctx->ipa_mhi_proxy)
 		imp_handle_modem_ready();
-
-	if (ipa3_ctx->ipa_config_is_mhi)
-		ipa_send_mhi_endp_ind_to_modem();
 }
 
 static inline bool rmnet_ipa3_check_any_client_inited

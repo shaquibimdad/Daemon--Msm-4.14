@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -489,20 +489,7 @@ sw_csum:
 	priv->stats.csum_sw++;
 }
 
-static void rmnet_map_v5_check_priority(struct sk_buff *skb,
-					struct net_device *orig_dev,
-					struct rmnet_map_v5_csum_header *hdr)
-{
-	struct rmnet_priv *priv = netdev_priv(orig_dev);
-
-	if (skb->priority) {
-		priv->stats.ul_prio++;
-		hdr->priority = 1;
-	}
-}
-
 void rmnet_map_v5_checksum_uplink_packet(struct sk_buff *skb,
-					 struct rmnet_port *port,
 					 struct net_device *orig_dev)
 {
 	struct rmnet_priv *priv = netdev_priv(orig_dev);
@@ -512,13 +499,6 @@ void rmnet_map_v5_checksum_uplink_packet(struct sk_buff *skb,
 		    skb_push(skb, sizeof(*ul_header));
 	memset(ul_header, 0, sizeof(*ul_header));
 	ul_header->header_type = RMNET_MAP_HEADER_TYPE_CSUM_OFFLOAD;
-
-	if (port->data_format & RMNET_EGRESS_FORMAT_PRIORITY)
-		rmnet_map_v5_check_priority(skb, orig_dev, ul_header);
-
-	/* Allow priority w/o csum offload */
-	if (!(port->data_format & RMNET_FLAGS_EGRESS_MAP_CKSUMV5))
-		return;
 
 	if (skb->ip_summed == CHECKSUM_PARTIAL) {
 		void *iph = (char *)ul_header + sizeof(*ul_header);
@@ -543,6 +523,7 @@ void rmnet_map_v5_checksum_uplink_packet(struct sk_buff *skb,
 
 		check = rmnet_map_get_csum_field(proto, trans);
 		if (check) {
+			*check = 0;
 			skb->ip_summed = CHECKSUM_NONE;
 			/* Ask for checksum offloading */
 			ul_header->csum_valid_required = 1;
@@ -559,7 +540,6 @@ sw_csum:
  * packets that are supported for UL checksum offload.
  */
 void rmnet_map_checksum_uplink_packet(struct sk_buff *skb,
-				      struct rmnet_port *port,
 				      struct net_device *orig_dev,
 				      int csum_type)
 {
@@ -568,7 +548,7 @@ void rmnet_map_checksum_uplink_packet(struct sk_buff *skb,
 		rmnet_map_v4_checksum_uplink_packet(skb, orig_dev);
 		break;
 	case RMNET_FLAGS_EGRESS_MAP_CKSUMV5:
-		rmnet_map_v5_checksum_uplink_packet(skb, port, orig_dev);
+		rmnet_map_v5_checksum_uplink_packet(skb, orig_dev);
 		break;
 	default:
 		break;
@@ -744,7 +724,6 @@ __rmnet_map_segment_coal_skb(struct sk_buff *coal_skb,
 	struct rmnet_priv *priv = netdev_priv(coal_skb->dev);
 	__sum16 *check = NULL;
 	u32 alloc_len;
-	bool zero_csum = false;
 
 	/* We can avoid copying the data if the SKB we got from the lower-level
 	 * drivers was nonlinear.
@@ -776,8 +755,6 @@ __rmnet_map_segment_coal_skb(struct sk_buff *coal_skb,
 
 		uh->len = htons(skbn->len);
 		check = &uh->check;
-		if (coal_meta->ip_proto == 4 && !uh->check)
-			zero_csum = true;
 	}
 
 	/* Push IP header and update necessary fields */
@@ -798,7 +775,7 @@ __rmnet_map_segment_coal_skb(struct sk_buff *coal_skb,
 	}
 
 	/* Handle checksum status */
-	if (likely(csum_valid) || zero_csum) {
+	if (likely(csum_valid)) {
 		/* Set the partial checksum information */
 		rmnet_map_partial_csum(skbn, coal_meta);
 	} else if (check) {
@@ -896,7 +873,6 @@ static void rmnet_map_segment_coal_skb(struct sk_buff *coal_skb,
 	u8 pkt, total_pkt = 0;
 	u8 nlo;
 	bool gro = coal_skb->dev->features & NETIF_F_GRO_HW;
-	bool zero_csum = false;
 
 	memset(&coal_meta, 0, sizeof(coal_meta));
 
@@ -958,15 +934,12 @@ static void rmnet_map_segment_coal_skb(struct sk_buff *coal_skb,
 		uh = (struct udphdr *)((u8 *)iph + coal_meta.ip_len);
 		coal_meta.trans_len = sizeof(*uh);
 		coal_meta.trans_header = uh;
-		/* Check for v4 zero checksum */
-		if (coal_meta.ip_proto == 4 && !uh->check)
-			zero_csum = true;
 	} else {
 		priv->stats.coal.coal_trans_invalid++;
 		return;
 	}
 
-	if (rmnet_map_v5_csum_buggy(coal_hdr) && !zero_csum) {
+	if (rmnet_map_v5_csum_buggy(coal_hdr)) {
 		rmnet_map_move_headers(coal_skb);
 		/* Mark as valid if it checks out */
 		if (rmnet_map_validate_csum(coal_skb, &coal_meta))
@@ -1305,7 +1278,6 @@ static void rmnet_free_agg_pages(struct rmnet_port *port)
 	struct rmnet_agg_page *agg_page, *idx;
 
 	list_for_each_entry_safe(agg_page, idx, &port->agg_list, list) {
-		list_del(&agg_page->list);
 		put_page(agg_page->page);
 		kfree(agg_page);
 	}
@@ -1365,7 +1337,6 @@ static struct rmnet_agg_page *__rmnet_alloc_agg_pages(struct rmnet_port *port)
 	}
 
 	agg_page->page = page;
-	INIT_LIST_HEAD(&agg_page->list);
 
 	return agg_page;
 }

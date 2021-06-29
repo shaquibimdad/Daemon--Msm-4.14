@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -16,9 +16,7 @@
 #include <linux/device.h>
 #include <linux/errno.h>
 #include <linux/debugfs.h>
-#include <linux/delay.h>
 #include <linux/ipa_mhi.h>
-#include <linux/msm_ep_pcie.h>
 #include "mhi_hwio.h"
 #include "mhi_sm.h"
 #include <linux/interrupt.h>
@@ -32,8 +30,6 @@
 #define MHI_SM_FUNC_ENTRY() MHI_SM_DBG("ENTRY\n")
 #define MHI_SM_FUNC_EXIT() MHI_SM_DBG("EXIT\n")
 
-#define MHI_IPA_DISABLE_DELAY_MS	10
-#define MHI_IPA_DISABLE_COUNTER	20
 
 static inline const char *mhi_sm_dev_event_str(enum mhi_dev_event state)
 {
@@ -546,7 +542,7 @@ exit:
 static int mhi_sm_change_to_M3(void)
 {
 	enum mhi_dev_state old_state;
-	int res = 0, wait_timeout = 0;
+	int res = 0;
 
 	MHI_SM_FUNC_ENTRY();
 
@@ -579,21 +575,11 @@ static int mhi_sm_change_to_M3(void)
 	}
 
 	if (mhi_sm_ctx->mhi_dev->use_ipa) {
-		while (wait_timeout < MHI_IPA_DISABLE_COUNTER) {
-			/* wait for the disable to finish */
-			res = ipa_dma_disable();
-			if (!res)
-				break;
-			MHI_SM_ERR("IPA disable fail cnt:%d\n",	wait_timeout);
-			msleep(MHI_IPA_DISABLE_DELAY_MS);
-			wait_timeout++;
+		res = ipa_dma_disable();
+		if (res) {
+			MHI_SM_ERR("IPA disable failed\n");
+			return res;
 		}
-
-		if (wait_timeout >= MHI_IPA_DISABLE_COUNTER) {
-			MHI_SM_ERR("Fail to disable IPA for M3\n");
-			goto exit;
-		}
-		MHI_SM_ERR("IPA DMA successfully disabled\n");
 	}
 
 exit:
@@ -613,22 +599,15 @@ exit:
 static int mhi_sm_wakeup_host(enum mhi_dev_event event)
 {
 	int res = 0;
-	enum ep_pcie_event pcie_event;
 
 	MHI_SM_FUNC_ENTRY();
 
 	if (mhi_sm_ctx->mhi_state == MHI_DEV_M3_STATE) {
 		/*
-		 * Check and send D3_HOT to enable waking up the host
-		 * using inband PME.
+		 * ep_pcie driver is responsible to send the right wakeup
+		 * event, assert WAKE#, according to Link state
 		 */
-		if (mhi_sm_ctx->d_state == MHI_SM_EP_PCIE_D3_HOT_STATE)
-			pcie_event = EP_PCIE_EVENT_PM_D3_HOT;
-		else
-			pcie_event = EP_PCIE_EVENT_PM_D3_COLD;
-
-		res = ep_pcie_wakeup_host(mhi_sm_ctx->mhi_dev->phandle,
-								pcie_event);
+		res = ep_pcie_wakeup_host(mhi_sm_ctx->mhi_dev->phandle);
 		if (res) {
 			MHI_SM_ERR("Failed to wakeup MHI host, returned %d\n",
 				res);
@@ -763,7 +742,6 @@ static void mhi_sm_dev_event_manager(struct work_struct *work)
 		res = mhi_sm_change_to_M3();
 		if (res)
 			MHI_SM_ERR("Failed switching to M3 state\n");
-		mhi_dev_pm_relax();
 		break;
 	case MHI_DEV_EVENT_HW_ACC_WAKEUP:
 	case MHI_DEV_EVENT_CORE_WAKEUP:
@@ -885,7 +863,7 @@ static void mhi_sm_pcie_event_manager(struct work_struct *work)
 		spin_unlock_irqrestore(&mhi_sm_ctx->mhi_dev->lock, flags);
 
 		res = ep_pcie_enable_endpoint(mhi_sm_ctx->mhi_dev->phandle,
-			EP_PCIE_OPT_ENUM | EP_PCIE_OPT_ENUM_ASYNC);
+			EP_PCIE_OPT_ENUM);
 		if (res) {
 			MHI_SM_ERR("ep-pcie failed to link train, return %d\n",
 				res);
@@ -943,8 +921,7 @@ int mhi_dev_sm_init(struct mhi_dev *mhi_dev)
 
 	/*init debugfs*/
 	mhi_sm_debugfs_init();
-	mhi_sm_ctx->mhi_sm_wq = alloc_workqueue(
-				"mhi_sm_wq", WQ_HIGHPRI | WQ_UNBOUND, 1);
+	mhi_sm_ctx->mhi_sm_wq = create_singlethread_workqueue("mhi_sm_wq");
 	if (!mhi_sm_ctx->mhi_sm_wq) {
 		MHI_SM_ERR("Failed to create singlethread_workqueue: sm_wq\n");
 		res = -ENOMEM;
@@ -983,9 +960,6 @@ int mhi_dev_sm_exit(struct mhi_dev *mhi_dev)
 	mhi_sm_debugfs_destroy();
 	flush_workqueue(mhi_sm_ctx->mhi_sm_wq);
 	destroy_workqueue(mhi_sm_ctx->mhi_sm_wq);
-	/* Initiate MHI IPA reset */
-	ipa_dma_disable();
-	ipa_mhi_destroy();
 	ipa_dma_destroy();
 	mutex_destroy(&mhi_sm_ctx->mhi_state_lock);
 	devm_kfree(mhi_dev->dev, mhi_sm_ctx);
@@ -1260,7 +1234,7 @@ void mhi_dev_sm_pcie_handler(struct ep_pcie_notify *notify)
 
 	dstate_change_evt->event = event;
 	INIT_WORK(&dstate_change_evt->work, mhi_sm_pcie_event_manager);
-	queue_work(system_highpri_wq, &dstate_change_evt->work);
+	queue_work(mhi_sm_ctx->mhi_sm_wq, &dstate_change_evt->work);
 	atomic_inc(&mhi_sm_ctx->pending_pcie_events);
 
 exit:

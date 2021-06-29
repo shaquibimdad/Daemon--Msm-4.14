@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -13,8 +13,6 @@
 #include <linux/ipa_mhi.h>
 #include <linux/ipa_uc_offload.h>
 #include <linux/ipa_wdi3.h>
-#include <linux/ipa_qdss.h>
-#include <linux/ipa_eth.h>
 #include "ipa_common_i.h"
 
 #ifndef _IPA_API_H_
@@ -220,34 +218,6 @@ struct ipa_api_controller {
 	int (*ipa_suspend_wdi_pipe)(u32 clnt_hdl);
 
 	int (*ipa_get_wdi_stats)(struct IpaHwStatsWDIInfoData_t *stats);
-
-	int (*ipa_eth_rtk_connect)(
-		struct ipa_eth_client_pipe_info *pipe,
-		enum ipa_client_type client_type);
-
-	int (*ipa_eth_aqc_connect)(
-		struct ipa_eth_client_pipe_info *pipe,
-		enum ipa_client_type client_type);
-
-	int (*ipa_eth_emac_connect)(
-		struct ipa_eth_client_pipe_info *pipe,
-		enum ipa_client_type client_type);
-
-	int (*ipa_eth_rtk_disconnect)(
-		struct ipa_eth_client_pipe_info *pipe,
-		enum ipa_client_type client_type);
-
-	int (*ipa_eth_aqc_disconnect)(
-		struct ipa_eth_client_pipe_info *pipe,
-		enum ipa_client_type client_type);
-
-	int (*ipa_eth_emac_disconnect)(
-		struct ipa_eth_client_pipe_info *pipe,
-		enum ipa_client_type client_type);
-
-	int (*ipa_eth_client_conn_evt)(struct ipa_ecm_msg *msg);
-
-	int (*ipa_eth_client_disconn_evt)(struct ipa_ecm_msg *msg);
 
 	u16 (*ipa_get_smem_restr_bytes)(void);
 
@@ -456,13 +426,13 @@ struct ipa_api_controller {
 		ipa_wdi_meter_notifier_cb wdi_notify);
 
 	int (*ipa_disconn_wdi_pipes)(int ipa_ep_idx_tx,
-		int ipa_ep_idx_rx, int ipa_ep_idx_tx1);
+		int ipa_ep_idx_rx);
 
 	int (*ipa_enable_wdi_pipes)(int ipa_ep_idx_tx,
-		int ipa_ep_idx_rx, int ipa_ep_idx_tx1);
+		int ipa_ep_idx_rx);
 
 	int (*ipa_disable_wdi_pipes)(int ipa_ep_idx_tx,
-		int ipa_ep_idx_rx, int ipa_ep_idx_tx1);
+		int ipa_ep_idx_rx);
 
 	int (*ipa_tz_unlock_reg)(struct ipa_tz_unlock_reg_info *reg_info,
 		u16 num_regs);
@@ -472,8 +442,6 @@ struct ipa_api_controller {
 	int (*ipa_is_vlan_mode)(enum ipa_vlan_ifaces iface, bool *res);
 
 	bool (*ipa_pm_is_used)(void);
-
-	bool (*ipa_get_lan_rx_napi)(void);
 
 	int (*ipa_wigig_uc_init)(
 		struct ipa_wdi_uc_ready_params *inout,
@@ -506,25 +474,6 @@ struct ipa_api_controller {
 		bool (*teth_port_state)(void), enum ipa_client_type client);
 
 	void (*ipa_deregister_client_callback)(enum ipa_client_type client);
-
-	int (*ipa_uc_debug_stats_alloc)(
-		struct IpaHwOffloadStatsAllocCmdData_t cmdinfo);
-
-	int (*ipa_uc_debug_stats_dealloc)(uint32_t prot_id);
-
-	void (*ipa_get_gsi_stats)(int prot_id,
-		struct ipa_uc_dbg_ring_stats *stats);
-
-	int (*ipa_get_prot_id)(enum ipa_client_type client);
-
-	int (*ipa_add_socksv5_conn)(struct ipa_socksv5_info *info);
-
-	int (*ipa_del_socksv5_conn)(uint32_t handle);
-
-	int (*ipa_conn_qdss_pipes)(struct ipa_qdss_conn_in_params *in,
-		struct ipa_qdss_conn_out_params *out);
-
-	int (*ipa_disconn_qdss_pipes)(void);
 };
 
 #ifdef CONFIG_IPA3

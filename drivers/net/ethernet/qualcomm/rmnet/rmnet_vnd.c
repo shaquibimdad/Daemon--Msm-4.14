@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -126,9 +126,10 @@ static void rmnet_vnd_uninit(struct net_device *dev)
 	gro_cells_destroy(&priv->gro_cells);
 	free_percpu(priv->pcpu_stats);
 
-	qos = rcu_dereference(priv->qos_info);
+	qos = priv->qos_info;
 	RCU_INIT_POINTER(priv->qos_info, NULL);
-	qmi_rmnet_qos_exit_pre(qos);
+	synchronize_rcu();
+	qmi_rmnet_qos_exit(dev, qos);
 }
 
 static void rmnet_get_stats64(struct net_device *dev,
@@ -220,11 +221,6 @@ static const char rmnet_gstrings_stats[][ETH_GSTRING_LEN] = {
 	"Coalescing packets over VEID1",
 	"Coalescing packets over VEID2",
 	"Coalescing packets over VEID3",
-	"Coalescing TCP frames",
-	"Coalescing TCP bytes",
-	"Coalescing UDP frames",
-	"Coalescing UDP bytes",
-	"Uplink priority packets",
 };
 
 static const char rmnet_port_gstrings_stats[][ETH_GSTRING_LEN] = {
@@ -370,8 +366,7 @@ int rmnet_vnd_newlink(u8 id, struct net_device *rmnet_dev,
 		rmnet_dev->rtnl_link_ops = &rmnet_link_ops;
 
 		priv->mux_id = id;
-		rcu_assign_pointer(priv->qos_info,
-				   qmi_rmnet_qos_init(real_dev, rmnet_dev, id));
+		priv->qos_info = qmi_rmnet_qos_init(real_dev, id);
 
 		netdev_dbg(rmnet_dev, "rmnet dev created\n");
 	}
