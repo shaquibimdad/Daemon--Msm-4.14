@@ -1392,8 +1392,7 @@ static inline void __free_iova(struct dma_iommu_mapping *mapping,
 
 	start = (addr - bitmap_base) >>	PAGE_SHIFT;
 
-	if ((addr + size - 1 > addr) &&
-		(addr + size - 1 > bitmap_base + mapping_size - 1)) {
+	if (addr + size > bitmap_base + mapping_size) {
 		/*
 		 * The address range to be freed reaches into the iova
 		 * range of the next bitmap. This should not happen as
@@ -1796,7 +1795,8 @@ void __arm_iommu_free_attrs(struct device *dev, size_t size, void *cpu_addr,
 void arm_iommu_free_attrs(struct device *dev, size_t size,
 		    void *cpu_addr, dma_addr_t handle, unsigned long attrs)
 {
-	__arm_iommu_free_attrs(dev, size, cpu_addr, handle, attrs, NORMAL);
+	__arm_iommu_free_attrs(dev, size, cpu_addr, handle, attrs,
+				is_dma_coherent(dev, attrs, NORMAL));
 }
 
 void arm_coherent_iommu_free_attrs(struct device *dev, size_t size,
@@ -2495,8 +2495,10 @@ static int arm_iommu_init_mapping(struct device *dev,
 	u64 size = mapping->bits << PAGE_SHIFT;
 	int is_fast = 0;
 
-	if (mapping->init)
+	if (mapping->init) {
+		kref_get(&mapping->kref);
 		return 0;
+	}
 
 	/* currently only 32-bit DMA address space is supported */
 	if (size > DMA_BIT_MASK(32) + 1) {
@@ -2536,7 +2538,6 @@ static int __arm_iommu_attach_device(struct device *dev,
 static void __arm_iommu_detach_device(struct device *dev)
 {
 	struct dma_iommu_mapping *mapping;
-	struct iommu_group *group;
 
 	mapping = to_dma_iommu_mapping(dev);
 	if (!mapping) {
@@ -2544,16 +2545,10 @@ static void __arm_iommu_detach_device(struct device *dev)
 		return;
 	}
 
-	group = iommu_group_get(dev);
-	if (!group) {
-		dev_warn(dev, "No iommu_group\n");
-		return;
-	}
-
 	if (msm_dma_unmap_all_for_dev(dev))
 		dev_warn(dev, "IOMMU detach with outstanding mappings\n");
 
-	iommu_detach_group(mapping->domain, group);
+	iommu_detach_device(mapping->domain, dev);
 	to_dma_iommu_mapping(dev) = NULL;
 
 	pr_debug("Detached IOMMU controller from %s device.\n", dev_name(dev));
