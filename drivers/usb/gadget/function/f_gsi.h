@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -78,9 +78,6 @@
 #define GSI_MBIM_DATA_EP_TYPE_HSUSB 0x2
 /* ID for Microsoft OS String */
 #define GSI_MBIM_OS_STRING_ID 0xEE
-
-static char compatible_id[256] = "ALTRCFG";
-static char sub_compatible_id[8];
 
 #define EVT_NONE			0
 #define EVT_UNINITIALIZED		1
@@ -208,7 +205,6 @@ struct gsi_ctrl_port {
 	atomic_t ctrl_online;
 
 	bool is_open;
-	bool is_suspended;
 
 	wait_queue_head_t read_wq;
 
@@ -477,7 +473,7 @@ static struct usb_ss_ep_comp_descriptor rmnet_gsi_ss_in_comp_desc = {
 	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
 
 	/* the following 2 values can be tweaked if necessary */
-	.bMaxBurst =		6,
+	.bMaxBurst =		2,
 	/* .bmAttributes =	0, */
 };
 
@@ -732,7 +728,7 @@ static struct usb_ss_ep_comp_descriptor rndis_gsi_ss_bulk_comp_desc = {
 	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
 
 	/* the following 2 values can be tweaked if necessary */
-	.bMaxBurst =		6,
+	.bMaxBurst =		2,
 	/* .bmAttributes =	0, */
 };
 
@@ -1018,7 +1014,7 @@ static struct usb_ss_ep_comp_descriptor mbim_gsi_ss_in_comp_desc = {
 	.bDescriptorType =      USB_DT_SS_ENDPOINT_COMP,
 
 	/* the following 2 values can be tweaked if necessary */
-	.bMaxBurst =         6,
+	.bMaxBurst =         2,
 	/* .bmAttributes =      0, */
 };
 
@@ -1274,7 +1270,7 @@ static struct usb_ss_ep_comp_descriptor ecm_gsi_ss_in_comp_desc = {
 	.bDescriptorType =	USB_DT_SS_ENDPOINT_COMP,
 
 	/* the following 2 values can be tweaked if necessary */
-	.bMaxBurst =         6,
+	.bMaxBurst =         2,
 	/* .bmAttributes =      0, */
 };
 

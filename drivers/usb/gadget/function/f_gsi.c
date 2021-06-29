@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -92,8 +92,7 @@ static inline bool usb_gsi_remote_wakeup_allowed(struct usb_function *f)
 	struct f_gsi *gsi = func_to_gsi(f);
 
 	if (f->config->cdev->gadget->speed >= USB_SPEED_SUPER)
-		remote_wakeup_allowed =
-			 f->func_is_suspended ? f->func_wakeup_allowed : false;
+		remote_wakeup_allowed = f->func_wakeup_allowed;
 	else
 		remote_wakeup_allowed = f->config->cdev->gadget->remote_wakeup;
 
@@ -270,15 +269,21 @@ static void gsi_rw_timer_func(unsigned long arg)
 static struct f_gsi *get_connected_gsi(void)
 {
 	struct f_gsi *connected_gsi;
+	bool gsi_connected = false;
 	int i;
 
-	for (i = 0; i < USB_PROT_MAX; i++) {
+	for (i = 0; i < IPA_USB_MAX_TETH_PROT_SIZE; i++) {
 		connected_gsi = __gsi[i];
-		if (connected_gsi && atomic_read(&connected_gsi->connected))
-			return connected_gsi;
+		if (connected_gsi && atomic_read(&connected_gsi->connected)) {
+			gsi_connected = true;
+			break;
+		}
 	}
 
-	return NULL;
+	if (!gsi_connected)
+		connected_gsi = NULL;
+
+	return connected_gsi;
 }
 
 #define DEFAULT_RW_TIMER_INTERVAL 500 /* in ms */
@@ -286,50 +291,43 @@ static ssize_t usb_gsi_rw_write(struct file *file,
 			const char __user *ubuf, size_t count, loff_t *ppos)
 {
 	struct f_gsi *gsi;
-	struct usb_function *func;
-	struct usb_gadget *gadget;
 	u8 input;
-	int i;
 	int ret;
 
+	gsi = get_connected_gsi();
+	if (!gsi) {
+		log_event_dbg("%s: gsi not connected\n", __func__);
+		goto err;
+	}
+
 	if (ubuf == NULL) {
-		pr_debug("%s: buffer is Null.\n", __func__);
+		log_event_dbg("%s: buffer is Null.\n", __func__);
 		goto err;
 	}
 
 	ret = kstrtou8_from_user(ubuf, count, 0, &input);
 	if (ret) {
-		pr_err("%s: Invalid value. err:%d\n", __func__, ret);
+		log_event_err("%s: Invalid value. err:%d\n", __func__, ret);
 		goto err;
 	}
 
+	if (gsi->debugfs_rw_timer_enable == !!input) {
+		if (!!input)
+			log_event_dbg("%s: RW already enabled\n", __func__);
+		else
+			log_event_dbg("%s: RW already disabled\n", __func__);
+		goto err;
+	}
 
-	for (i = 0; i < USB_PROT_MAX; i++) {
-		gsi = __gsi[i];
-		if (gsi && atomic_read(&gsi->connected)) {
-			func = &gsi->function;
-			gadget = func->config->cdev->gadget;
-			gsi->debugfs_rw_timer_enable = !!input;
-			if (gadget->speed >= USB_SPEED_SUPER &&
-					!func->func_is_suspended) {
-				gsi->debugfs_rw_timer_enable = 0;
-				del_timer_sync(&gsi->gsi_rw_timer);
-				continue;
-			}
+	gsi->debugfs_rw_timer_enable = !!input;
 
-			if (gsi->debugfs_rw_timer_enable) {
-				mod_timer(&gsi->gsi_rw_timer, jiffies +
-				  msecs_to_jiffies(gsi->gsi_rw_timer_interval));
-				log_event_dbg("%s: timer initialized\n",
-								__func__);
-			} else {
-				del_timer_sync(&gsi->gsi_rw_timer);
-				log_event_dbg("%s: timer deleted\n", __func__);
-			}
-
-			if (gadget->speed < USB_SPEED_SUPER)
-				break;
-		}
+	if (gsi->debugfs_rw_timer_enable) {
+		mod_timer(&gsi->gsi_rw_timer, jiffies +
+			  msecs_to_jiffies(gsi->gsi_rw_timer_interval));
+		log_event_dbg("%s: timer initialized\n", __func__);
+	} else {
+		del_timer_sync(&gsi->gsi_rw_timer);
+		log_event_dbg("%s: timer deleted\n", __func__);
 	}
 
 err:
@@ -340,16 +338,14 @@ static int usb_gsi_rw_show(struct seq_file *s, void *unused)
 {
 
 	struct f_gsi *gsi;
-	int i;
-	u8 enable = 0;
 
-	for (i = 0; i < USB_PROT_MAX; i++) {
-		gsi = __gsi[i];
-		if (gsi && atomic_read(&gsi->connected))
-			enable |= gsi->debugfs_rw_timer_enable;
+	gsi = get_connected_gsi();
+	if (!gsi) {
+		log_event_dbg("%s: gsi not connected\n", __func__);
+		return 0;
 	}
 
-	seq_printf(s, "%d\n", enable);
+	seq_printf(s, "%d\n", gsi->debugfs_rw_timer_enable);
 
 	return 0;
 }
@@ -373,31 +369,31 @@ static ssize_t usb_gsi_rw_timer_write(struct file *file,
 {
 	struct f_gsi *gsi;
 	u16 timer_val;
-	int i;
 	int ret;
 
+	gsi = get_connected_gsi();
+	if (!gsi) {
+		log_event_dbg("%s: gsi not connected\n", __func__);
+		goto err;
+	}
+
 	if (ubuf == NULL) {
-		pr_debug("%s: buffer is NULL.\n", __func__);
+		log_event_dbg("%s: buffer is NULL.\n", __func__);
 		goto err;
 	}
 
 	ret = kstrtou16_from_user(ubuf, count, 0, &timer_val);
 	if (ret) {
-		pr_err("%s: Invalid value. err:%d\n", __func__, ret);
+		log_event_err("%s: Invalid value. err:%d\n", __func__, ret);
 		goto err;
 	}
 
 	if (timer_val <= 0 || timer_val >  10000) {
-		pr_err("%s: value must be > 0 and < 10000.\n", __func__);
+		log_event_err("%s: value must be > 0 and < 10000.\n", __func__);
 		goto err;
 	}
 
-	for (i = 0; i < USB_PROT_MAX; i++) {
-		gsi = __gsi[i];
-		if (gsi && atomic_read(&gsi->connected))
-			gsi->gsi_rw_timer_interval = timer_val;
-	}
-
+	gsi->gsi_rw_timer_interval = timer_val;
 err:
 	return count;
 }
@@ -1843,41 +1839,9 @@ static int queue_notification_request(struct f_gsi *gsi)
 {
 	int ret;
 	unsigned long flags;
-	struct usb_function *func = &gsi->function;
-	struct usb_request *req = gsi->c_port.notify_req;
-	struct usb_ep *ep = gsi->c_port.notify;
-	struct usb_gadget *gadget = func->config->cdev->gadget;
 
-	if (gsi->c_port.is_suspended) {
-		/*For remote wakeup, queue the req from gsi_resume*/
-		spin_lock_irqsave(&gsi->c_port.lock, flags);
-		gsi->c_port.notify_req_queued = false;
-		spin_unlock_irqrestore(&gsi->c_port.lock, flags);
-
-		if (gsi->rwake_inprogress) {
-			log_event_dbg("%s remote-wakeup in progress\n",
-							__func__);
-			return -EBUSY;
-		}
-
-		if (!usb_gsi_remote_wakeup_allowed(func)) {
-			log_event_dbg("%s remote-wakeup not capable\n",
-							__func__);
-			return -EOPNOTSUPP;
-		}
-
-		log_event_dbg("%s wakeup host\n", __func__);
-		if (gadget->speed >= USB_SPEED_SUPER
-		    && func->func_is_suspended)
-			ret = usb_func_wakeup(func);
-		else
-			ret = usb_gadget_wakeup(gadget);
-
-		gsi->rwake_inprogress = true;
-		return ret;
-	}
-
-	ret = usb_ep_queue(ep, req, GFP_ATOMIC);
+	ret = usb_func_ep_queue(&gsi->function, gsi->c_port.notify,
+			   gsi->c_port.notify_req, GFP_ATOMIC);
 	if (ret < 0) {
 		spin_lock_irqsave(&gsi->c_port.lock, flags);
 		gsi->c_port.notify_req_queued = false;
@@ -2504,7 +2468,6 @@ static int gsi_set_alt(struct usb_function *f, unsigned int intf,
 				gsi->data_id, gsi->data_interface_up);
 	}
 
-	gsi->c_port.is_suspended = false;
 	atomic_set(&gsi->connected, 1);
 
 	/* send 0 len pkt to qti to notify state change */
@@ -2604,7 +2567,6 @@ static void gsi_suspend(struct usb_function *f)
 		return;
 	}
 
-	gsi->c_port.is_suspended = true;
 	block_db = true;
 	usb_gsi_ep_op(gsi->d_port.in_ep, (void *)&block_db,
 			GSI_EP_OP_SET_CLR_BLOCK_DBL);
@@ -2635,8 +2597,6 @@ static void gsi_resume(struct usb_function *f)
 
 	if (gsi->c_port.notify && !gsi->c_port.notify->desc)
 		config_ep_by_speed(cdev->gadget, f, gsi->c_port.notify);
-
-	gsi->c_port.is_suspended = false;
 
 	/* Check any pending cpkt, and queue immediately on resume */
 	gsi_ctrl_send_notification(gsi);
@@ -2929,7 +2889,6 @@ static int gsi_bind(struct usb_configuration *c, struct usb_function *f)
 	struct gsi_function_bind_info info = {0};
 	struct f_gsi *gsi = func_to_gsi(f);
 	struct rndis_params *params;
-	struct usb_os_desc *descs[1];
 	struct gsi_opts *opts;
 	struct net_device *net;
 	char *name = NULL;
@@ -3148,14 +3107,6 @@ static int gsi_bind(struct usb_configuration *c, struct usb_function *f)
 			f->os_desc_n = 1;
 			f->os_desc_table[0].os_desc = &opts->os_desc;
 			f->os_desc_table[0].if_id = gsi->data_id;
-			opts->os_desc.ext_compat_id = opts->ext_compat_id;
-			descs[0] = &opts->os_desc;
-			snprintf(sub_compatible_id, sizeof(sub_compatible_id),
-					"%u", c->bConfigurationValue);
-			memcpy(descs[0]->ext_compat_id, compatible_id,
-					strlen(compatible_id));
-			memcpy(descs[0]->ext_compat_id + 8, sub_compatible_id,
-					strlen(sub_compatible_id));
 		}
 		break;
 	case USB_PROT_RMNET_IPA:
@@ -3370,13 +3321,6 @@ static void gsi_unbind(struct usb_configuration *c, struct usb_function *f)
 	 */
 	drain_workqueue(gsi->d_port.ipa_usb_wq);
 	ipa_usb_deinit_teth_prot((enum ipa_usb_teth_prot)gsi->prot_id);
-
-	/* Reset string ids */
-	rndis_gsi_string_defs[0].id = 0;
-	ecm_gsi_string_defs[0].id   = 0;
-	rmnet_gsi_string_defs[0].id = 0;
-	mbim_gsi_string_defs[0].id  = 0;
-	qdss_gsi_string_defs[0].id  = 0;
 
 skip_ipa_dinit:
 	if (gsi->prot_id == USB_PROT_RNDIS_IPA) {

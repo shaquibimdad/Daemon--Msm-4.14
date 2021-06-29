@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -56,7 +56,6 @@
 #include "xhci.h"
 
 #define SDP_CONNETION_CHECK_TIME 10000 /* in ms */
-#define EXTCON_SYNC_EVENT_TIMEOUT_MS 1500 /* in ms */
 
 /* time out to wait for USB cable status notification (in ms)*/
 #define SM_INIT_TIMEOUT 30000
@@ -1161,7 +1160,7 @@ static int gsi_prepare_trbs(struct usb_ep *ep, struct usb_gsi_request *req)
 	req->buf_base_addr = dma_alloc_attrs(dwc->sysdev, len, &req->dma,
 					GFP_KERNEL, dma_attr);
 	if (!req->buf_base_addr) {
-		dev_err(dwc->dev, "buf_base_addr allocate failed %s\n",
+		dev_err(dwc->dev, "%s: buf_base_addr allocate failed %s\n",
 				dep->name);
 		return -ENOMEM;
 	}
@@ -1460,7 +1459,6 @@ static void gsi_set_clear_dbell(struct usb_ep *ep,
 	struct dwc3 *dwc = dep->dwc;
 	struct dwc3_msm *mdwc = dev_get_drvdata(dwc->dev->parent);
 
-	dbg_log_string("block_db(%d)", block_db);
 	dwc3_msm_write_reg_field(mdwc->base,
 		GSI_GENERAL_CFG_REG(mdwc->gsi_reg[GENERAL_CFG_REG]),
 		BLOCK_GSI_WR_GO_MASK, block_db);
@@ -1521,11 +1519,6 @@ static int dwc3_msm_gsi_ep_op(struct usb_ep *ep,
 
 	switch (op) {
 	case GSI_EP_OP_PREPARE_TRBS:
-		if (!dwc->pullups_connected) {
-			dbg_log_string("No Pullup\n");
-			return -ESHUTDOWN;
-		}
-
 		request = (struct usb_gsi_request *)op_data;
 		ret = gsi_prepare_trbs(ep, request);
 		break;
@@ -1534,22 +1527,12 @@ static int dwc3_msm_gsi_ep_op(struct usb_ep *ep,
 		gsi_free_trbs(ep, request);
 		break;
 	case GSI_EP_OP_CONFIG:
-		if (!dwc->pullups_connected) {
-			dbg_log_string("No Pullup\n");
-			return -ESHUTDOWN;
-		}
-
 		request = (struct usb_gsi_request *)op_data;
 		spin_lock_irqsave(&dwc->lock, flags);
 		gsi_configure_ep(ep, request);
 		spin_unlock_irqrestore(&dwc->lock, flags);
 		break;
 	case GSI_EP_OP_STARTXFER:
-		if (!dwc->pullups_connected) {
-			dbg_log_string("No Pullup\n");
-			return -ESHUTDOWN;
-		}
-
 		spin_lock_irqsave(&dwc->lock, flags);
 		ret = gsi_startxfer_for_ep(ep);
 		spin_unlock_irqrestore(&dwc->lock, flags);
@@ -1562,11 +1545,6 @@ static int dwc3_msm_gsi_ep_op(struct usb_ep *ep,
 		gsi_store_ringbase_dbl_info(ep, request);
 		break;
 	case GSI_EP_OP_ENABLE_GSI:
-		if (!dwc->pullups_connected) {
-			dbg_log_string("No Pullup\n");
-			return -ESHUTDOWN;
-		}
-
 		gsi_enable(ep);
 		break;
 	case GSI_EP_OP_GET_CH_INFO:
@@ -1574,11 +1552,6 @@ static int dwc3_msm_gsi_ep_op(struct usb_ep *ep,
 		gsi_get_channel_info(ep, ch_info);
 		break;
 	case GSI_EP_OP_RING_DB:
-		if (!dwc->pullups_connected) {
-			dbg_log_string("No Pullup\n");
-			return -ESHUTDOWN;
-		}
-
 		request = (struct usb_gsi_request *)op_data;
 		gsi_ring_db(ep, request);
 		break;
@@ -1596,11 +1569,6 @@ static int dwc3_msm_gsi_ep_op(struct usb_ep *ep,
 		break;
 	case GSI_EP_OP_SET_CLR_BLOCK_DBL:
 		block_db = *((bool *)op_data);
-		if (!dwc->pullups_connected && !block_db) {
-			dbg_log_string("No Pullup\n");
-			return -ESHUTDOWN;
-		}
-
 		gsi_set_clear_dbell(ep, block_db);
 		break;
 	case GSI_EP_OP_CHECK_FOR_SUSPEND:
@@ -3073,7 +3041,6 @@ static irqreturn_t msm_dwc3_pwr_irq(int irq, void *data)
 }
 
 static void dwc3_otg_sm_work(struct work_struct *w);
-static int get_psy_type(struct dwc3_msm *mdwc);
 
 static int dwc3_msm_get_clk_gdsc(struct dwc3_msm *mdwc)
 {
@@ -3240,8 +3207,6 @@ static void check_for_sdp_connection(struct work_struct *w)
 	}
 }
 
-#define DP_PULSE_WIDTH_MSEC 200
-
 static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	unsigned long event, void *ptr)
 {
@@ -3265,13 +3230,6 @@ static int dwc3_msm_vbus_notifier(struct notifier_block *nb,
 	dev_dbg(mdwc->dev, "vbus:%ld event received\n", event);
 
 	mdwc->vbus_active = event;
-
-	if (get_psy_type(mdwc) == POWER_SUPPLY_TYPE_USB_CDP &&
-			mdwc->vbus_active) {
-		dev_dbg(mdwc->dev, "Connected to CDP, pull DP up\n");
-		usb_phy_drive_dp_pulse(mdwc->hs_phy, DP_PULSE_WIDTH_MSEC);
-	}
-
 	if ((dwc->dr_mode == USB_DR_MODE_OTG) && !mdwc->in_restart)
 		queue_work(mdwc->dwc3_wq, &mdwc->resume_work);
 
@@ -3630,12 +3588,12 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	}
 
 	/*
-	 * Create an ordered freezable workqueue for sm_work so that it gets
-	 * scheduled only after pm_resume has happened completely. This helps
-	 * in avoiding race conditions between xhci_plat_resume and
-	 * xhci_runtime_resume and also between hcd disconnect and xhci_resume.
+	 * Create freezable workqueue for sm_work so that it gets scheduled only
+	 * after pm_resume has happened completely. This helps in avoiding race
+	 * conditions between xhci_plat_resume and xhci_runtime_resume; and also
+	 * between hcd disconnect and xhci_resume.
 	 */
-	mdwc->sm_usb_wq = alloc_ordered_workqueue("k_sm_usb", WQ_FREEZABLE);
+	mdwc->sm_usb_wq = create_freezable_workqueue("k_sm_usb");
 	if (!mdwc->sm_usb_wq) {
 		destroy_workqueue(mdwc->dwc3_wq);
 		return -ENOMEM;
@@ -3833,7 +3791,6 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	of_node_put(dwc3_node);
 	if (!mdwc->dwc3) {
 		dev_err(&pdev->dev, "failed to get dwc3 platform device\n");
-		ret = -ENODEV;
 		goto put_dwc3;
 	}
 
@@ -3871,7 +3828,6 @@ static int dwc3_msm_probe(struct platform_device *pdev)
 	dwc = platform_get_drvdata(mdwc->dwc3);
 	if (!dwc) {
 		dev_err(&pdev->dev, "Failed to get dwc3 device\n");
-		ret = -ENODEV;
 		goto put_dwc3;
 	}
 
@@ -4449,40 +4405,47 @@ static int dwc3_otg_start_peripheral(struct dwc3_msm *mdwc, int on)
 	return 0;
 }
 
-/**
- * dwc3_usb_blocking_sync - Waits until event is completed or maximum upto 1.5
- * secs.
- *
- * @host_enable_event: Event can be start usb host or stop usb host.
- */
 static int dwc3_usb_blocking_sync(struct notifier_block *nb,
-				unsigned long host_enable_event, void *ptr)
+				unsigned long event, void *ptr)
 {
 	struct dwc3 *dwc;
 	struct extcon_dev *edev = ptr;
 	struct extcon_nb *enb = container_of(nb, struct extcon_nb,
 						blocking_sync_nb);
 	struct dwc3_msm *mdwc = enb->mdwc;
-	unsigned long timeout_ms = jiffies +
-			msecs_to_jiffies(EXTCON_SYNC_EVENT_TIMEOUT_MS);
+	int ret = 0;
 
 	if (!edev || !mdwc)
 		return NOTIFY_DONE;
 
 	dwc = platform_get_drvdata(mdwc->dwc3);
+
 	dbg_event(0xFF, "fw_blocksync", 0);
+	flush_work(&mdwc->resume_work);
+	drain_workqueue(mdwc->sm_usb_wq);
 
-	do {
-		if (mdwc->drd_state == (host_enable_event ? DRD_STATE_HOST
-					: DRD_STATE_IDLE))
-			break;
-		msleep(50);
-	} while (time_before(jiffies, timeout_ms));
+	if (!mdwc->in_host_mode && !mdwc->in_device_mode) {
+		dbg_event(0xFF, "lpm_state", atomic_read(&dwc->in_lpm));
 
-	if (!time_before(jiffies, timeout_ms))
-		dev_err(mdwc->dev, "TIMEOUT when changing the state\n");
+		/*
+		 * stop host mode functionality performs autosuspend with mdwc
+		 * device, and it may take sometime to call PM runtime suspend.
+		 * Hence call pm_runtime_suspend() API to invoke PM runtime
+		 * suspend immediately to put USB controller and PHYs into
+		 * suspend.
+		 */
+		ret = pm_runtime_suspend(mdwc->dev);
+		dbg_event(0xFF, "pm_runtime_sus", ret);
 
-	return 0;
+		/*
+		 * If mdwc device is already suspended, pm_runtime_suspend() API
+		 * returns 1, which is not error. Overwrite with zero if it is.
+		 */
+		if (ret > 0)
+			ret = 0;
+	}
+
+	return ret;
 }
 
 static int get_psy_type(struct dwc3_msm *mdwc)
@@ -4702,6 +4665,8 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 			mdwc->vbus_retry_count = 0;
 			work = 1;
 		} else {
+			mdwc->drd_state = DRD_STATE_HOST;
+
 			ret = dwc3_otg_start_host(mdwc, 1);
 			if ((ret == -EPROBE_DEFER) &&
 						mdwc->vbus_retry_count < 3) {
@@ -4709,15 +4674,15 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 				 * Get regulator failed as regulator driver is
 				 * not up yet. Will try to start host after 1sec
 				 */
+				mdwc->drd_state = DRD_STATE_HOST_IDLE;
 				dev_dbg(mdwc->dev, "Unable to get vbus regulator. Retrying...\n");
 				delay = VBUS_REG_CHECK_DELAY;
 				work = 1;
 				mdwc->vbus_retry_count++;
 			} else if (ret) {
 				dev_err(mdwc->dev, "unable to start host\n");
+				mdwc->drd_state = DRD_STATE_HOST_IDLE;
 				goto ret;
-			} else {
-				mdwc->drd_state = DRD_STATE_HOST;
 			}
 		}
 		break;
