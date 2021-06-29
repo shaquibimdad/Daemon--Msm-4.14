@@ -1,4 +1,4 @@
-/* Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2017-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,6 @@
 #include <linux/of_platform.h>
 #include <linux/poll.h>
 #include <linux/regulator/consumer.h>
-#include <linux/sizes.h>
 #include <linux/thermal.h>
 #include <linux/soc/qcom/llcc-qcom.h>
 #include <linux/soc/qcom/cdsprm_cxlimit.h>
@@ -38,8 +37,8 @@
  */
 #define CLASS_NAME              "npu"
 #define DRIVER_NAME             "msm_npu"
-#define DDR_MAPPED_START_ADDR   0x00000000
-#define DDR_MAPPED_SIZE         (SZ_1G * 4ULL)
+#define DDR_MAPPED_START_ADDR   0x80000000
+#define DDR_MAPPED_SIZE         0x60000000
 
 #define MBOX_OP_TIMEOUTMS 1000
 
@@ -1572,7 +1571,7 @@ static int npu_process_kevent(struct npu_kevent *kevt)
 	switch (kevt->evt.type) {
 	case MSM_NPU_EVENT_TYPE_EXEC_V2_DONE:
 		ret = copy_to_user((void __user *)kevt->reserved[1],
-			(void *)kevt->reserved[0],
+			(void *)&kevt->reserved[0],
 			kevt->evt.u.exec_v2_done.stats_buf_size);
 		if (ret) {
 			pr_err("fail to copy to user\n");
