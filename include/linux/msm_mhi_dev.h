@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2020, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2019, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -73,7 +73,6 @@ struct mhi_req {
 	struct list_head                list;
 	union mhi_dev_ring_element_type *el;
 	void (*client_cb)(void *req);
-	bool				is_stale;
 };
 
 /* SW channel client list */
@@ -134,12 +133,9 @@ enum mhi_client_channel {
 	MHI_CLIENT_IP_HW_0_OUT = 100,
 	MHI_CLIENT_IP_HW_0_IN = 101,
 	MHI_CLIENT_ADPL_IN = 102,
-	MHI_CLIENT_IP_HW_QDSS = 103,
-	MHI_CLIENT_IP_HW_1_OUT = 105,
-	MHI_CLIENT_IP_HW_1_IN = 106,
-	MHI_CLIENT_QMAP_FLOW_CTRL_OUT = 109,
-	MHI_CLIENT_QMAP_FLOW_CTRL_IN = 110,
-	MHI_MAX_CHANNELS = 255,
+	MHI_CLIENT_RESERVED_2_LOWER = 102,
+	MHI_CLIENT_RESERVED_2_UPPER = 127,
+	MHI_MAX_CHANNELS = 102,
 	MHI_CLIENT_INVALID = 0xFFFFFFFF
 };
 
@@ -172,7 +168,7 @@ int mhi_dev_open_channel(uint32_t chan_id,
 /**
  * mhi_dev_close_channel() - Channel close for a given client.
  */
-void mhi_dev_close_channel(struct mhi_dev_client *handle_client);
+int mhi_dev_close_channel(struct mhi_dev_client *handle_client);
 
 /**
  * mhi_dev_read_channel() - Channel read for a given client
@@ -197,13 +193,6 @@ int mhi_dev_write_channel(struct mhi_req *wreq);
  * @handle_client:	Client Handle issued during mhi_dev_open_channel
  */
 int mhi_dev_channel_isempty(struct mhi_dev_client *handle);
-
-/**
-* mhi_dev_channel_has_pending_write() - Checks if there are any pending writes
-*					to be completed on inbound channel
-* @handle_client:	Client Handle issued during mhi_dev_open_channel
-*/
-bool mhi_dev_channel_has_pending_write(struct mhi_dev_client *handle);
 
 /**
  * mhi_ctrl_state_info() - Provide MHI state info
@@ -254,12 +243,6 @@ static inline int mhi_dev_channel_isempty(struct mhi_dev_client *handle)
 {
 	return -EINVAL;
 };
-
-static inline bool mhi_dev_channel_has_pending_write
-	(struct mhi_dev_client *handle)
-{
-	return false;
-}
 
 static inline int mhi_ctrl_state_info(uint32_t idx, uint32_t *info)
 {

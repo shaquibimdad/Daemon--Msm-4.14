@@ -1,4 +1,4 @@
-/* Copyright (c) 2019-2020 The Linux Foundation. All rights reserved.
+/* Copyright (c) 2019 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,6 @@
 #include <linux/netdevice.h>
 #include <linux/netdev_features.h>
 
-#include <linux/ipa.h>
 #include <linux/msm_ipa.h>
 #include <linux/msm_gsi.h>
 
@@ -40,17 +39,9 @@
  *                - probe() and remove() offload bus ops are replaced by pair()
  *                  and unpair() callbacks respectively
  *           3    - Added .save_regs() callback for network and offload drivers
- *           4    - Added ipa_eth_device_notify() interface for client drivers
- *                  to notify of various device events.
- *           5    - Removed ipa_eth_{gsi,uc}_iommu_*{} APIs that were used for
- *                  mapping memory to GSI and IPA uC IOMMU CBs.
- *           6    - Added ipa_eth_ep_deinit()
- *           7    - ipa_eth_net_ops.receive_skb() now accepts in_napi parameter
- *           8    - Added IPA rx/tx intf properties to ipa_eth_device
- *           9    - Support for skipping IPA API call from offload sub-system
  */
 
-#define IPA_ETH_API_VER 9
+#define IPA_ETH_API_VER 3
 
 /**
  * enum ipa_eth_dev_features - Features supported by an ethernet device or
@@ -64,7 +55,6 @@
  * @IPA_ETH_DEV_F_VLAN_BIT: VLAN Offload
  * @IPA_ETH_DEV_F_MODC_BIT: Counter based event moderation
  * @IPA_ETH_DEV_F_MODT_BIT: Timer based event moderation
- * @IPA_ETH_DEV_F_IPA_API: Driver supports direct IPA API calls
  *
  * Ethernet hardware features represented as bit numbers below are used in
  * IPA_ETH_DEV_F_* feature flags that are to be used in offload APIs.
@@ -79,7 +69,6 @@ enum ipa_eth_dev_features {
 	IPA_ETH_DEV_F_VLAN_BIT,
 	IPA_ETH_DEV_F_MODC_BIT,
 	IPA_ETH_DEV_F_MODT_BIT,
-	IPA_ETH_DEV_F_IPA_API_BIT,
 };
 
 #define ipa_eth_dev_f(f) BIT(IPA_ETH_DEV_F_##f##_BIT)
@@ -93,7 +82,6 @@ enum ipa_eth_dev_features {
 #define IPA_ETH_DEV_F_VLAN     ipa_eth_dev_f(VLAN)
 #define IPA_ETH_DEV_F_MODC     ipa_eth_dev_f(MODC)
 #define IPA_ETH_DEV_F_MODT     ipa_eth_dev_f(MODT)
-#define IPA_ETH_DEV_F_IPA_API  ipa_eth_dev_f(IPA_API)
 
 /**
  * enum ipa_eth_dev_events - Events supported by an ethernet device that may be
@@ -440,8 +428,6 @@ struct ipa_eth_channel {
  * @od_priv: Private field for use by offload driver
  * @rx_channels: Rx channels allocated for the offload path
  * @tx_channels: Tx channels allocated for the offload path
- * @ipa_rx_intf: IPA properties Rx interface
- * @ipa_tx_intf: IPA properties Tx interface
  * @of_state: Offload state of the device
  * @dev: Pointer to struct device
  * @nd: IPA offload net driver associated with the device
@@ -454,15 +440,12 @@ struct ipa_eth_channel {
  * @start_on_resume: Allow start upon driver resume
  * @start_on_timeout: Timeout in milliseconds after which @start is enabled
  * @start_timer: Timer associated with @start_on_timer
- * @flags: Device flags
+ * @state: Device state
  * @if_state: Interface state - one or more bit numbers IPA_ETH_IF_ST_*
  * @pm_handle: IPA PM client handle for the device
- * @phdr_v4_handle: Partial header handle for IPv4
- * @phdr_v6_handle: Partial header handle for IPv6
  * @bus_priv: Private field for use by offload subsystem bus layer
  * @ipa_priv: Private field for use by offload subsystem
  * @debugfs: Debugfs root for the device
- * @skip_ipa: Skip IPA API calls from the sub-system
  * @refresh: Work struct used to perform device refresh
  */
 struct ipa_eth_device {
@@ -480,9 +463,6 @@ struct ipa_eth_device {
 	struct list_head rx_channels;
 	struct list_head tx_channels;
 
-	struct ipa_rx_intf ipa_rx_intf;
-	struct ipa_tx_intf ipa_tx_intf;
-
 	enum ipa_eth_offload_state of_state;
 
 	struct device *dev;
@@ -499,41 +479,17 @@ struct ipa_eth_device {
 	u32 start_on_timeout;
 	struct timer_list start_timer;
 
-	unsigned long flags;
+	unsigned long state;
 	unsigned long if_state;
 
 	u32 pm_handle;
-	u32 phdr_v4_handle;
-	u32 phdr_v6_handle;
 
 	void *bus_priv;
 	void *ipa_priv;
 	struct dentry *debugfs;
 
-	bool skip_ipa;
-
 	struct work_struct refresh;
 };
-
-/**
- * enum ipa_eth_device_event - Events related to device state
- * @IPA_ETH_DEV_RESET_PREPARE: Device is entering reset and is requesting
- *                             offload path to stop using the device
- * @IPA_ETH_DEV_RESET_COMPLETE: Device has completed resetting and is
- *                              requesting offload path to resume its operations
- * @IPA_ETH_DEV_ADD_MACSEC_IF: A MACSec interface is coming up
- * @IPA_ETH_DEV_DEL_MACSEC_IF: A MACSec interface is going down
- */
-enum ipa_eth_device_event {
-	IPA_ETH_DEV_RESET_PREPARE,
-	IPA_ETH_DEV_RESET_COMPLETE,
-	IPA_ETH_DEV_ADD_MACSEC_IF,
-	IPA_ETH_DEV_DEL_MACSEC_IF,
-	IPA_ETH_DEV_EVENT_COUNT,
-};
-
-int ipa_eth_device_notify(struct ipa_eth_device *eth_dev,
-	enum ipa_eth_device_event event, void *data);
 
 #ifdef IPA_ETH_NET_DRIVER
 
@@ -717,7 +673,6 @@ struct ipa_eth_net_ops {
 	 *                  stack
 	 * @eth_dev: Device to which the skb need to belong
 	 * @skb: Skb to be provided to Linux network stack
-	 * @in_napi: IPA LAN Rx is executing in NAPI poll
 	 *
 	 * When a network packet received by the IPA connected device queue can
 	 * not be routed within IPA, it will be sent to Linux as an exception
@@ -733,7 +688,7 @@ struct ipa_eth_net_ops {
 	 * expected to have been freed.
 	 */
 	int (*receive_skb)(struct ipa_eth_device *eth_dev,
-		struct sk_buff *skb, bool in_napi);
+		struct sk_buff *skb);
 
 	/**
 	 * .transmit_skb() - Transmit an skb given IPA
@@ -761,11 +716,11 @@ struct ipa_eth_net_ops {
 /**
  * struct ipa_eth_net_driver - Network driver to be registered with IPA offload
  *                             subsystem
- * @driver_list: Entry in the offload sub-system network driver list
- * @bus_driver_list: Entry in the bus specific driver list
- * @ops: Network device operations
- * @bus_priv: Bus private data
  * @name: Name of the network driver
+ * @driver: Pointer to the device_driver object embedded within a PCI/plaform
+ *          driver object used by the network driver
+ * @events: Events supported by the network device
+ * @features: Capabilities of the network device
  * @bus: Pointer to the bus object. Must use &pci_bus_type for PCI and
  *       &platform_bus_type for platform drivers. This property is used by the
  *       offload subsystem to deduce the network driver's original pci_driver
@@ -773,25 +728,18 @@ struct ipa_eth_net_ops {
  *       registration.
  *       Beyond registration, the bus type is also used to deduce a pci_dev or
  *       platform_device object from a `struct device` pointer.
- * @driver: Pointer to the device_driver object embedded within a PCI/plaform
- *          driver object used by the network driver
- * @events: Events supported by the network device
- * @features: Capabilities of the network device
+ * @ops: Network device operations
  * @debugfs: Debugfs directory for the device
  */
 struct ipa_eth_net_driver {
-	struct list_head driver_list;
-	struct list_head bus_driver_list;
-
-	struct ipa_eth_net_ops *ops;
-	void *bus_priv;
-
 	const char *name;
-	struct bus_type *bus;
 	struct device_driver *driver;
 
 	unsigned long events;
 	unsigned long features;
+
+	struct bus_type *bus;
+	struct ipa_eth_net_ops *ops;
 
 	struct dentry *debugfs;
 };
@@ -964,32 +912,12 @@ struct ipa_eth_offload_ops {
 	 */
 	int (*save_regs)(struct ipa_eth_device *eth_dev,
 		void **regs, size_t *size);
-
-	/**
-	 * .prepare_reset() - Prepare offload path for netdev reset
-	 * @eth_dev: Offloaded device
-	 * @data: Private data the network driver has provided
-	 *
-	 * Return: 0 on success, errno otherwise.
-	 */
-	int (*prepare_reset)(struct ipa_eth_device *eth_dev, void *data);
-
-	/**
-	 * .complete_reset() - Netdev reset completed, offload path can resume
-	 * @eth_dev: Offloaded device
-	 * @data: Private data the network driver has provided
-	 *
-	 * Return: 0 on success, errno otherwise.
-	 */
-	int (*complete_reset)(struct ipa_eth_device *eth_dev, void *data);
-
 };
 
 /**
  * struct ipa_eth_offload_driver - Offload driver to be registered with the
  *                                 offload sub-system
  * @driver_list: Entry in the global offload driver list
- * @mutex: Mutex to protect offload driver struct
  * @name: Name of the offload driver
  * @bus: Supported network device bus type
  * @ops: Offload operations
@@ -998,7 +926,6 @@ struct ipa_eth_offload_ops {
  */
 struct ipa_eth_offload_driver {
 	struct list_head driver_list;
-	struct mutex mutex;
 
 	const char *name;
 	struct bus_type *bus;
@@ -1039,7 +966,6 @@ struct ipa_eth_resource *ipa_eth_net_ch_to_cb_mem(
 	enum ipa_eth_hw_type hw_type);
 
 int ipa_eth_ep_init(struct ipa_eth_channel *ch);
-int ipa_eth_ep_deinit(struct ipa_eth_channel *ch);
 int ipa_eth_ep_start(struct ipa_eth_channel *ch);
 int ipa_eth_ep_stop(struct ipa_eth_channel *ch);
 
@@ -1055,7 +981,12 @@ int ipa_eth_gsi_ring_evtring(struct ipa_eth_channel *ch, u64 value);
 int ipa_eth_gsi_ring_channel(struct ipa_eth_channel *ch, u64 value);
 int ipa_eth_gsi_start(struct ipa_eth_channel *ch);
 int ipa_eth_gsi_stop(struct ipa_eth_channel *ch);
-#endif /* IPA_ETH_OFFLOAD_DRIVER */
+
+int ipa_eth_gsi_iommu_pamap(dma_addr_t daddr, phys_addr_t paddr,
+	size_t size, int prot, bool split);
+int ipa_eth_gsi_iommu_vamap(dma_addr_t daddr, void *vaddr,
+	size_t size, int prot, bool split);
+int ipa_eth_gsi_iommu_unmap(dma_addr_t daddr, size_t size, bool split);
 
 /* IPA uC interface for ethernet devices */
 
@@ -1089,7 +1020,13 @@ enum ipa_eth_uc_resp {
 int ipa_eth_uc_send_cmd(enum ipa_eth_uc_op op, u32 protocol,
 	const void *prot_data, size_t datasz);
 
+int ipa_eth_uc_iommu_pamap(dma_addr_t daddr, phys_addr_t paddr,
+	size_t size, int prot, bool split);
+int ipa_eth_uc_iommu_vamap(dma_addr_t daddr, void *vaddr,
+	size_t size, int prot, bool split);
+int ipa_eth_uc_iommu_unmap(dma_addr_t daddr, size_t size, bool split);
 
+#endif /* IPA_ETH_OFFLOAD_DRIVER */
 
 /* IPC logging interface */
 
@@ -1114,242 +1051,5 @@ int ipa_eth_uc_send_cmd(enum ipa_eth_uc_op op, u32 protocol,
 		ipa_eth_ipc_do_log(ipa_eth_get_ipc_logbuf_dbg(), \
 					fmt, ## args); \
 	} while (0)
-
-
-/* New architecture prototypes */
-
-typedef void (*ipa_eth_ready_cb)(void *user_data);
-typedef u32 ipa_eth_hdl_t;
-
-/**
- * struct ipa_eth_ready_cb - eth readiness parameters
- *
- * @notify: ipa_eth client ready callback notifier
- * @userdata: userdata for ipa_eth ready cb
- * @is_eth_ready: true if ipa_eth client is already ready
- */
-struct ipa_eth_ready {
-	ipa_eth_ready_cb notify;
-	void *userdata;
-
-	/* out params */
-	bool is_eth_ready;
-};
-
-/**
- * enum ipa_eth_client_type - names for the various IPA
- * eth "clients".
- */
-enum ipa_eth_client_type {
-	IPA_ETH_CLIENT_AQC107,
-	IPA_ETH_CLIENT_AQC113,
-	IPA_ETH_CLIENT_RTK8111K,
-	IPA_ETH_CLIENT_RTK8125B,
-	IPA_ETH_CLIENT_NTN,
-	IPA_ETH_CLIENT_EMAC,
-	IPA_ETH_CLIENT_MAX,
-};
-
-/**
- * enum ipa_eth_pipe_traffic_type - traffic type for the various IPA
- * eth "pipes".
- */
-enum ipa_eth_pipe_traffic_type {
-	IPA_ETH_PIPE_BEST_EFFORT,
-	IPA_ETH_PIPE_LOW_LATENCY,
-	IPA_ETH_PIPE_TRAFFIC_TYPE_MAX,
-};
-
-/**
- * enum ipa_eth_pipe_direction - pipe direcitons for same
- * ethernet client.
- */
-enum ipa_eth_pipe_direction {
-	IPA_ETH_PIPE_DIR_TX,
-	IPA_ETH_PIPE_DIR_RX,
-	IPA_ETH_PIPE_DIR_MAX,
-};
-
-#define IPA_ETH_INST_ID_MAX (2)
-
-/**
- * struct ipa_eth_aqc_setup_info - parameters for aqc ethernet
- * offloading
- *
- * @aqc_tail_ptr: PA of AQC HW tail pointer
- */
-struct ipa_eth_aqc_setup_info {
-	phys_addr_t aqc_tail_ptr;
-};
-
-
-/**
- * struct ipa_eth_realtek_setup_info - parameters for realtek ethernet
- * offloading
- *
- * @bar_addr: bar PA to access RTK register
- * @bar_size: bar region size
- * @queue_number: Which RTK queue to check the status on
- * @dest_tail_ptr_offs: tail ptr offset
- */
-struct ipa_eth_realtek_setup_info {
-	phys_addr_t bar_addr;
-	u32 bar_size;
-	u8 queue_number;
-	phys_addr_t dest_tail_ptr_offs;
-};
-
-/**
- * struct ipa_eth_buff_smmu_map -  IPA iova->pa SMMU mapping
- * @iova: virtual address of the data buffer
- * @pa: physical address of the data buffer
- */
-struct ipa_eth_buff_smmu_map {
-	dma_addr_t iova;
-	phys_addr_t pa;
-};
-
-/**
- * struct  ipa_eth_pipe_setup_info - info needed for IPA setups
- * @is_transfer_ring_valid: if transfer ring is needed
- * @transfer_ring_base:  the base of the transfer ring
- * @transfer_ring_sgt: sgtable of transfer ring
- * @transfer_ring_size:  size of the transfer ring
- * @is_buffer_pool_valid: if buffer pool is needed
- * @buffer_pool_base_addr:  base of buffer pool address
- * @buffer_pool_base_sgt:  sgtable of buffer pool
- * @data_buff_list_size: number of buffers
- * @data_buff_list: array of data buffer list
- * @fix_buffer_size: buffer size
- * @notify:	callback for exception/embedded packets
- * @priv: priv for exception callback
- * @client_info: vendor specific pipe setup info
- * @db_pa: doorbell physical address
- * @db_val: doorbell value ethernet HW need to ring
- */
-struct ipa_eth_pipe_setup_info {
-	/* transfer ring info */
-	bool is_transfer_ring_valid;
-	dma_addr_t  transfer_ring_base;
-	struct sg_table *transfer_ring_sgt;
-	u32 transfer_ring_size;
-
-	/* buffer pool info */
-	bool is_buffer_pool_valid;
-	dma_addr_t buffer_pool_base_addr;
-	struct sg_table *buffer_pool_base_sgt;
-
-	/* buffer info */
-	u32 data_buff_list_size;
-	struct ipa_eth_buff_smmu_map *data_buff_list;
-	u32 fix_buffer_size;
-
-	/* client notify cb */
-	ipa_notify_cb notify;
-	void *priv;
-
-	/* vendor specific info */
-	union {
-		struct ipa_eth_aqc_setup_info aqc;
-		struct ipa_eth_realtek_setup_info rtk;
-	} client_info;
-
-	/* output params */
-	phys_addr_t db_pa;
-	u32 db_val;
-};
-
-/**
- * struct  ipa_eth_client_pipe_info - ETH pipe/gsi related configuration
- * @link: link of ep for different client function on same ethernet HW
- * @dir: TX or RX direction
- * @info: tx/rx pipe setup info
- * @client_info: client the pipe belongs to
- * @pipe_hdl: output params, pipe handle
- */
-struct ipa_eth_client_pipe_info {
-	struct list_head link;
-	enum ipa_eth_pipe_direction dir;
-	struct ipa_eth_pipe_setup_info info;
-	struct ipa_eth_client *client_info;
-
-	/* output params */
-	ipa_eth_hdl_t pipe_hdl;
-};
-
-/**
- * struct  ipa_eth_client - client info per traffic type
- * provided by offload client
- * @client_type: ethernet client type
- * @inst_id: instance id for dual NIC support
- * @traffic_type: traffic type
- * @pipe_list: list of pipes with same traffic type
- * @priv: private data for client
- */
-struct ipa_eth_client {
-	/* vendor driver */
-	enum ipa_eth_client_type client_type;
-	u8 inst_id;
-
-	/* traffic type */
-	enum ipa_eth_pipe_traffic_type traffic_type;
-	struct list_head pipe_list;
-
-	/* client specific priv data*/
-	void *priv;
-};
-
-/**
- * struct  ipa_eth_perf_profile - To set BandWidth profile
- *
- * @max_supported_bw_mbps: maximum bandwidth needed (in Mbps)
- */
-struct ipa_eth_perf_profile {
-	u32 max_supported_bw_mbps;
-};
-
-/**
- * struct ipa_eth_hdr_info - Header to install on IPA HW
- *
- * @hdr: header to install on IPA HW
- * @hdr_len: length of header
- * @dst_mac_addr_offset: destination mac address offset
- * @hdr_type: layer two header type
- */
-struct ipa_eth_hdr_info {
-	u8 *hdr;
-	u8 hdr_len;
-	u8 dst_mac_addr_offset;
-	enum ipa_hdr_l2_type hdr_type;
-};
-
-/**
- * struct ipa_eth_intf_info - parameters for ipa offload
- *	interface registration
- *
- * @netdev_name: network interface name
- * @hdr: hdr for ipv4/ipv6
- * @pipe_hdl_list_size: number of pipes prop needed for this interface
- * @pipe_hdl_list: array of pipes used for this interface
- */
-struct ipa_eth_intf_info {
-	const char *netdev_name;
-	struct ipa_eth_hdr_info hdr[IPA_IP_MAX];
-
-	/* tx/rx pipes for same netdev */
-	int pipe_hdl_list_size;
-	ipa_eth_hdl_t *pipe_hdl_list;
-};
-
-int ipa_eth_register_ready_cb(struct ipa_eth_ready *ready_info);
-int ipa_eth_unregister_ready_cb(struct ipa_eth_ready *ready_info);
-int ipa_eth_client_conn_pipes(struct ipa_eth_client *client);
-int ipa_eth_client_disconn_pipes(struct ipa_eth_client *client);
-int ipa_eth_client_reg_intf(struct ipa_eth_intf_info *intf);
-int ipa_eth_client_unreg_intf(struct ipa_eth_intf_info *intf);
-int ipa_eth_client_set_perf_profile(struct ipa_eth_client *client,
-	struct ipa_eth_perf_profile *profile);
-int ipa_eth_client_conn_evt(struct ipa_ecm_msg *msg);
-int ipa_eth_client_disconn_evt(struct ipa_ecm_msg *msg);
 
 #endif // _IPA_ETH_H_
