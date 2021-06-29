@@ -159,7 +159,7 @@ void sdhci_dumpregs(struct sdhci_host *host)
 	sdhci_dump_state(host);
 	SDHCI_DUMP("============================================\n");
 	/* crash the system upon setting this debugfs. */
-	if (host->mmc->crash_on_err)
+	//if (host->mmc->crash_on_err)
 		BUG_ON(1);
 }
 EXPORT_SYMBOL_GPL(sdhci_dumpregs);
@@ -1168,7 +1168,7 @@ static void __sdhci_finish_mrq(struct sdhci_host *host, struct mmc_request *mrq)
 
 	WARN_ON(i >= SDHCI_MAX_MRQS);
 
-	tasklet_hi_schedule(&host->finish_tasklet);
+	tasklet_schedule(&host->finish_tasklet);
 }
 
 static void sdhci_finish_mrq(struct sdhci_host *host, struct mmc_request *mrq)
